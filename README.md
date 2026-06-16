@@ -63,6 +63,14 @@ The login command prints the delivery type returned by Telegram. `SentCodeTypeAp
 python -m app.main login --force-sms
 ```
 
+If Telegram does not deliver the code, use QR login instead:
+
+```bash
+python -m app.main login-qr
+```
+
+Open Telegram on your phone and scan it through Settings -> Devices -> Link Desktop Device.
+
 ## Inspect Folders
 
 List folders:

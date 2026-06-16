@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +57,15 @@ def sent_code_summary(sent: Any) -> str:
     return f"delivery={delivery} fallback={fallback} timeout={timeout_text}"
 
 
+def print_qr_code(url: str) -> None:
+    import qrcode
+
+    qr = qrcode.QRCode(border=2)
+    qr.add_data(url)
+    qr.make(fit=True)
+    qr.print_ascii(out=sys.stdout, invert=True)
+
+
 @app.command()
 def login(force_sms: bool = typer.Option(False, "--force-sms", help="Ask Telegram for SMS delivery when possible.")) -> None:
     """Create or validate a user MTProto session."""
@@ -87,6 +97,51 @@ def login(force_sms: bool = typer.Option(False, "--force-sms", help="Ask Telegra
             await client.disconnect()
 
     run_async(_login())
+
+
+@app.command("login-qr")
+def login_qr(
+    timeout: int = typer.Option(120, "--timeout", min=30, help="Seconds to wait for QR scan."),
+    show_url: bool = typer.Option(False, "--show-url", help="Also print the sensitive QR login URL."),
+) -> None:
+    """Create a user MTProto session by scanning a Telegram QR code."""
+
+    async def _login_qr() -> None:
+        settings = settings_or_exit()
+        client = create_telegram_client(settings)
+        await client.connect()
+        try:
+            if await client.is_user_authorized():
+                me = await client.get_me()
+                typer.echo(
+                    f"Already logged in: id={getattr(me, 'id', None)} "
+                    f"username={getattr(me, 'username', None)} phone={getattr(me, 'phone', None)}"
+                )
+                return
+
+            qr_login = await client.qr_login()
+            wait_task = asyncio.create_task(qr_login.wait(timeout=timeout))
+            await asyncio.sleep(0)
+            typer.echo("Scan this QR in Telegram: Settings -> Devices -> Link Desktop Device")
+            print_qr_code(qr_login.url)
+            if show_url:
+                typer.echo(f"QR login URL: {qr_login.url}")
+            try:
+                me = await wait_task
+            except asyncio.TimeoutError as exc:
+                raise RuntimeError("QR login timed out. Run login-qr again to generate a fresh QR.") from exc
+            except SessionPasswordNeededError:
+                password = typer.prompt("Telegram 2FA password", hide_input=True)
+                await client.sign_in(password=password)
+                me = await client.get_me()
+            typer.echo(
+                f"Logged in: id={getattr(me, 'id', None)} "
+                f"username={getattr(me, 'username', None)} phone={getattr(me, 'phone', None)}"
+            )
+        finally:
+            await client.disconnect()
+
+    run_async(_login_qr())
 
 
 @app.command("inspect-folders")
