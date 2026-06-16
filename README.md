@@ -57,6 +57,12 @@ python -m app.main login
 
 Enter the Telegram code and 2FA password if Telegram asks for them. Protect the generated `.session` file like a password.
 
+The login command prints the delivery type returned by Telegram. `SentCodeTypeApp` means the code was sent to an already authorized Telegram app, not SMS. If Telegram allows it, request SMS delivery with:
+
+```bash
+python -m app.main login --force-sms
+```
+
 ## Inspect Folders
 
 List folders:

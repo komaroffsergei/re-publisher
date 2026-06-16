@@ -8,7 +8,7 @@ import typer
 from alembic import command
 from alembic.config import Config
 from pydantic import ValidationError
-from telethon.errors import SessionPasswordNeededError
+from telethon.errors import RPCError, SessionPasswordNeededError
 
 from app.config import Settings, get_settings
 from app.folders import extract_filter_title, resolve_folder_chats, fetch_dialog_filters
@@ -46,8 +46,18 @@ async def connect_authorized(settings: Settings):
     return client
 
 
+def sent_code_summary(sent: Any) -> str:
+    code_type = getattr(sent, "type", None)
+    next_type = getattr(sent, "next_type", None)
+    timeout = getattr(sent, "timeout", None)
+    delivery = code_type.__class__.__name__ if code_type else "unknown"
+    fallback = next_type.__class__.__name__ if next_type else "none"
+    timeout_text = "none" if timeout is None else str(timeout)
+    return f"delivery={delivery} fallback={fallback} timeout={timeout_text}"
+
+
 @app.command()
-def login() -> None:
+def login(force_sms: bool = typer.Option(False, "--force-sms", help="Ask Telegram for SMS delivery when possible.")) -> None:
     """Create or validate a user MTProto session."""
 
     async def _login() -> None:
@@ -57,7 +67,11 @@ def login() -> None:
         try:
             if not await client.is_user_authorized():
                 phone = settings.tg_phone or typer.prompt("Telegram phone")
-                await client.send_code_request(phone)
+                try:
+                    sent = await client.send_code_request(phone, force_sms=force_sms)
+                except RPCError as exc:
+                    raise RuntimeError(f"Telegram refused to send code: {exc}") from exc
+                typer.echo(f"Telegram code requested: {sent_code_summary(sent)}")
                 code = typer.prompt("Telegram code")
                 try:
                     await client.sign_in(phone=phone, code=code)
