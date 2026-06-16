@@ -33,7 +33,7 @@ def settings_or_exit() -> Settings:
 def run_async(coro: Any) -> None:
     try:
         asyncio.run(coro)
-    except RuntimeError as exc:
+    except (RuntimeError, ValueError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
 
