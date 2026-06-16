@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "re-publisher"
+version = "0.1.0"
+description = "Telegram folder collector service for PostgreSQL"
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.13,<2",
+    "asyncpg>=0.29,<1",
+    "pydantic-settings>=2.3,<3",
+    "SQLAlchemy>=2.0,<3",
+    "Telethon>=1.36,<2",
+    "typer>=0.12,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+    "pytest-asyncio>=0.23,<1",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+asyncio_mode = "auto"
+testpaths = ["tests"]

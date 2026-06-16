@@ -1,0 +1,34 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: max_collector
+      POSTGRES_USER: max_collector
+      POSTGRES_PASSWORD: max_collector
+    ports:
+      - "55432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U max_collector -d max_collector"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ./secrets/app.env
+    environment:
+      DB_DSN: postgresql+asyncpg://max_collector:max_collector@postgres:5432/max_collector
+    command: ["python", "-m", "app.main", "run", "--folder", "MAX"]
+    volumes:
+      - ./sessions:/app/sessions
+      - ./media:/app/media
+      - ./secrets:/app/secrets:ro
+
+volumes:
+  postgres_data:
