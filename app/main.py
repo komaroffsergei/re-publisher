@@ -20,11 +20,23 @@ from app.telegram_client import create_telegram_client
 app = typer.Typer(no_args_is_help=True)
 
 
+def safe_text(value: Any, *, stream=None) -> str:
+    text = str(value)
+    target = stream or sys.stdout
+    encoding = getattr(target, "encoding", None) or "utf-8"
+    return text.encode(encoding, errors="replace").decode(encoding, errors="replace")
+
+
+def safe_echo(value: Any = "", *, err: bool = False) -> None:
+    stream = sys.stderr if err else sys.stdout
+    typer.echo(safe_text(value, stream=stream), err=err)
+
+
 def settings_or_exit() -> Settings:
     try:
         settings = get_settings()
     except ValidationError as exc:
-        typer.echo(f"Configuration error: {exc}", err=True)
+        safe_echo(f"Configuration error: {exc}", err=True)
         raise typer.Exit(2) from exc
     setup_logging(settings.log_level)
     return settings
@@ -34,7 +46,7 @@ def run_async(coro: Any) -> None:
     try:
         asyncio.run(coro)
     except (RuntimeError, ValueError) as exc:
-        typer.echo(f"Error: {exc}", err=True)
+        safe_echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
 
 
@@ -81,7 +93,7 @@ def login(force_sms: bool = typer.Option(False, "--force-sms", help="Ask Telegra
                     sent = await client.send_code_request(phone, force_sms=force_sms)
                 except RPCError as exc:
                     raise RuntimeError(f"Telegram refused to send code: {exc}") from exc
-                typer.echo(f"Telegram code requested: {sent_code_summary(sent)}")
+                safe_echo(f"Telegram code requested: {sent_code_summary(sent)}")
                 code = typer.prompt("Telegram code")
                 try:
                     await client.sign_in(phone=phone, code=code)
@@ -89,7 +101,7 @@ def login(force_sms: bool = typer.Option(False, "--force-sms", help="Ask Telegra
                     password = typer.prompt("Telegram 2FA password", hide_input=True)
                     await client.sign_in(password=password)
             me = await client.get_me()
-            typer.echo(
+            safe_echo(
                 f"Logged in: id={getattr(me, 'id', None)} "
                 f"username={getattr(me, 'username', None)} phone={getattr(me, 'phone', None)}"
             )
@@ -113,7 +125,7 @@ def login_qr(
         try:
             if await client.is_user_authorized():
                 me = await client.get_me()
-                typer.echo(
+                safe_echo(
                     f"Already logged in: id={getattr(me, 'id', None)} "
                     f"username={getattr(me, 'username', None)} phone={getattr(me, 'phone', None)}"
                 )
@@ -122,10 +134,10 @@ def login_qr(
             qr_login = await client.qr_login()
             wait_task = asyncio.create_task(qr_login.wait(timeout=timeout))
             await asyncio.sleep(0)
-            typer.echo("Scan this QR in Telegram: Settings -> Devices -> Link Desktop Device")
+            safe_echo("Scan this QR in Telegram: Settings -> Devices -> Link Desktop Device")
             print_qr_code(qr_login.url)
             if show_url:
-                typer.echo(f"QR login URL: {qr_login.url}")
+                safe_echo(f"QR login URL: {qr_login.url}")
             try:
                 me = await wait_task
             except asyncio.TimeoutError as exc:
@@ -134,7 +146,7 @@ def login_qr(
                 password = typer.prompt("Telegram 2FA password", hide_input=True)
                 await client.sign_in(password=password)
                 me = await client.get_me()
-            typer.echo(
+            safe_echo(
                 f"Logged in: id={getattr(me, 'id', None)} "
                 f"username={getattr(me, 'username', None)} phone={getattr(me, 'phone', None)}"
             )
@@ -154,7 +166,7 @@ def inspect_folders() -> None:
         try:
             filters = await fetch_dialog_filters(client)
             for item in filters:
-                typer.echo(f"id={getattr(item, 'id', None)} title={extract_filter_title(item)}")
+                safe_echo(f"id={getattr(item, 'id', None)} title={extract_filter_title(item)}")
         finally:
             await client.disconnect()
 
@@ -172,7 +184,7 @@ def inspect_folder(folder: str = typer.Option(None, "--folder", "-f")) -> None:
         try:
             chats = await resolve_folder_chats(client, target_folder)
             for chat in chats:
-                typer.echo(
+                safe_echo(
                     f"peer_id={chat.peer_id} title={chat.title!r} "
                     f"username={chat.username!r} type={chat.chat_type}"
                 )
@@ -188,7 +200,7 @@ def migrate() -> None:
     settings_or_exit()
     alembic_ini = Path(__file__).resolve().parent.parent / "alembic.ini"
     command.upgrade(Config(str(alembic_ini)), "head")
-    typer.echo("Migrations applied")
+    safe_echo("Migrations applied")
 
 
 @app.command()

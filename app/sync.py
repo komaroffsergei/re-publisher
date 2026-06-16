@@ -330,15 +330,51 @@ async def run_service(settings: Settings, folder_name: str | None = None) -> Non
 
     session_factory = create_session_factory(settings)
     current_chats = await resolve_and_store_chats(client, settings, session_factory, folder)
-    for chat in list(current_chats.values()):
-        await sync_chat(client, settings, session_factory, chat)
+    background_tasks: set[asyncio.Task] = set()
+
+    def track_task(task: asyncio.Task) -> asyncio.Task:
+        background_tasks.add(task)
+        task.add_done_callback(background_tasks.discard)
+        return task
+
+    async def backfill_chats(chats: list[FolderChat], reason: str) -> None:
+        total = 0
+        logger.info("backfill_started", extra={"extra": {"folder": folder, "chat_count": len(chats), "reason": reason}})
+        for chat in chats:
+            total += await sync_chat(client, settings, session_factory, chat)
+        logger.info(
+            "backfill_finished",
+            extra={"extra": {"folder": folder, "chat_count": len(chats), "messages_saved": total, "reason": reason}},
+        )
 
     async def refresh_loop() -> None:
         nonlocal current_chats
         while True:
             await asyncio.sleep(settings.folder_refresh_seconds)
             try:
-                current_chats = await resolve_and_store_chats(client, settings, session_factory, folder)
+                previous_peer_ids = set(current_chats)
+                refreshed_chats = await resolve_and_store_chats(client, settings, session_factory, folder)
+                current_chats = refreshed_chats
+                added = [
+                    chat
+                    for peer_id, chat in refreshed_chats.items()
+                    if peer_id not in previous_peer_ids
+                ]
+                removed_count = len(previous_peer_ids - set(refreshed_chats))
+                if added or removed_count:
+                    logger.info(
+                        "folder_membership_changed",
+                        extra={
+                            "extra": {
+                                "folder": folder,
+                                "added_count": len(added),
+                                "removed_count": removed_count,
+                                "chat_count": len(refreshed_chats),
+                            }
+                        },
+                    )
+                if added:
+                    track_task(asyncio.create_task(backfill_chats(added, "folder_refresh")))
             except FloodWaitError as exc:
                 await sleep_for_flood_wait(exc)
             except Exception as exc:
@@ -372,9 +408,13 @@ async def run_service(settings: Settings, folder_name: str | None = None) -> Non
             await mark_messages_deleted(session, resolved_peer_id, list(event.deleted_ids))
 
     refresh_task = asyncio.create_task(refresh_loop())
+    track_task(asyncio.create_task(backfill_chats(list(current_chats.values()), "startup")))
     try:
         logger.info("service_started", extra={"extra": {"folder": folder, "chat_count": len(current_chats)}})
         await client.run_until_disconnected()
     finally:
         refresh_task.cancel()
+        for task in list(background_tasks):
+            task.cancel()
+        await asyncio.gather(refresh_task, *background_tasks, return_exceptions=True)
         await client.disconnect()

@@ -22,7 +22,7 @@ class JsonishFormatter(logging.Formatter):
             payload.update(extra)
         if record.exc_info:
             payload["exc_info"] = self.formatException(record.exc_info)
-        return json.dumps(payload, ensure_ascii=False, default=str)
+        return json.dumps(payload, ensure_ascii=True, default=str)
 
 
 def setup_logging(level: str) -> None:
