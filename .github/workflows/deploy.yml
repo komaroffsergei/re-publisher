@@ -36,13 +36,14 @@ jobs:
             -o StrictHostKeyChecking=yes \
             "$DEPLOY_USER@$DEPLOY_HOST" \
             'set -Eeuo pipefail
-             if [ ! -d /opt/re-publisher/.git ]; then
-               rm -rf /opt/re-publisher
-               git clone git@github.com:komaroffsergei/re-publisher.git /opt/re-publisher
-             fi
+             mkdir -p /opt/re-publisher
              cd /opt/re-publisher
+             if [ ! -d .git ]; then
+               git init
+               git remote add origin git@github.com:komaroffsergei/re-publisher.git
+             fi
              git fetch --prune origin
-             git checkout main
+             git checkout -B main origin/main
              git reset --hard origin/main
              chmod +x scripts/deploy.sh
              ./scripts/deploy.sh'
