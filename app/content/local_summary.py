@@ -97,7 +97,7 @@ def summarize_text(text: str | None, title: str | None, settings: Settings) -> t
 
 
 async def yandex_summary(snapshot: LinkSnapshot, settings: Settings, prompt_config: dict) -> tuple[str | None, str | None]:
-    if not settings.enable_local_summary or not clean_text(snapshot.extracted_text):
+    if not clean_text(snapshot.extracted_text):
         return None, None
     model = model_uri(settings, "summary")
     system_prompt, user_prompt = build_summary_messages(
