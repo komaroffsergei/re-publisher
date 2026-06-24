@@ -21,6 +21,8 @@ from telethon.errors import (
 
 from app.comments import collect_comments_for_post
 from app.config import Settings
+from app.content.pipeline_activity import reset_stale_pipeline_activity, try_acquire_pipeline_work_lock
+from app.content.pipeline_entries import ensure_pipeline_entry_for_post, sync_pipeline_entry_stage
 from app.db import create_session_factory, session_scope
 from app.folders import FolderChat, resolve_folder_chats
 from app.models import TelegramChat, TelegramComment, TelegramPost, TelegramSyncState
@@ -132,8 +134,8 @@ async def upsert_chat(session: AsyncSession, folder_name: str, chat: FolderChat)
     )
 
 
-async def upsert_post(session: AsyncSession, data: dict[str, Any]) -> None:
-    await session.execute(build_post_upsert(data))
+async def upsert_post(session: AsyncSession, data: dict[str, Any]) -> int:
+    return int((await session.execute(build_post_upsert(data).returning(TelegramPost.id))).scalar_one())
 
 
 async def upsert_comment(session: AsyncSession, data: dict[str, Any]) -> None:
@@ -206,10 +208,11 @@ async def save_message(
     chat: FolderChat,
     message: Any,
     collect_comments: bool = True,
-) -> None:
+) -> int:
     media_path = await maybe_download_media(settings, message, chat.peer_id, message.id)
     post_data = message_to_post_dict(client, chat.entity, message, media_path)
-    await upsert_post(session, post_data)
+    post_id = await upsert_post(session, post_data)
+    await ensure_pipeline_entry_for_post(session, post_id)
     await update_sync_state(session, chat.peer_id, message.id)
     if collect_comments:
         await collect_comments_for_post(
@@ -222,19 +225,36 @@ async def save_message(
             maybe_download_media,
             upsert_comment,
         )
+    return post_id
 
 
-async def sync_chat(client: Any, settings: Settings, session_factory: async_sessionmaker[AsyncSession], chat: FolderChat) -> int:
+async def sync_chat(
+    client: Any,
+    settings: Settings,
+    session_factory: async_sessionmaker[AsyncSession],
+    chat: FolderChat,
+    *,
+    force_full_history: bool = False,
+    collect_comments: bool = True,
+    on_saved_post: Callable[[int], None] | None = None,
+) -> int:
     saved = 0
     try:
         async with session_scope(session_factory) as session:
             await upsert_chat(session, settings.folder_name, chat)
-            last_message_id = await get_last_message_id(session, chat.peer_id)
+            last_message_id = None if force_full_history else await get_last_message_id(session, chat.peer_id)
 
-        async for message in iter_initial_messages(settings, chat.entity, client, last_message_id):
+        if force_full_history:
+            message_iter = client.iter_messages(chat.entity, limit=None, reverse=True)
+        else:
+            message_iter = iter_initial_messages(settings, chat.entity, client, last_message_id)
+        async for message in message_iter:
+            post_id = None
             async with session_scope(session_factory) as session:
-                await save_message(client, settings, session, chat, message)
+                post_id = await save_message(client, settings, session, chat, message, collect_comments=collect_comments)
                 saved += 1
+            if on_saved_post:
+                on_saved_post(post_id)
     except FloodWaitError as exc:
         await sleep_for_flood_wait(exc)
         return saved
@@ -287,6 +307,26 @@ async def sync_folder(settings: Settings, folder_name: str | None = None) -> Non
         await client.disconnect()
 
 
+async def sync_folder_full_history(settings: Settings, folder_name: str | None = None, collect_comments: bool = False) -> None:
+    folder = folder_name or settings.folder_name
+    client = create_telegram_client(settings)
+    await client.connect()
+    try:
+        if not await client.is_user_authorized():
+            raise RuntimeError("Telegram session is not authorized. Run: python -m app.main login")
+        session_factory = create_session_factory(settings)
+        chats = await resolve_and_store_chats(client, settings, session_factory, folder)
+        total = 0
+        for chat in chats.values():
+            total += await sync_chat(client, settings, session_factory, chat, force_full_history=True, collect_comments=collect_comments)
+        logger.info(
+            "full_history_sync_finished",
+            extra={"extra": {"folder": folder, "messages_saved": total, "collect_comments": collect_comments}},
+        )
+    finally:
+        await client.disconnect()
+
+
 def event_peer_id(event: Any) -> int | None:
     event_peer = getattr(event, "peer_id", None)
     resolved = peer_id(event_peer)
@@ -329,19 +369,84 @@ async def run_service(settings: Settings, folder_name: str | None = None) -> Non
         raise RuntimeError("Telegram session is not authorized. Run: python -m app.main login")
 
     session_factory = create_session_factory(settings)
+    async with session_scope(session_factory) as session:
+        await reset_stale_pipeline_activity(session)
     current_chats = await resolve_and_store_chats(client, settings, session_factory, folder)
     background_tasks: set[asyncio.Task] = set()
+    processing_queue: asyncio.Queue[int] = asyncio.Queue()
+    queued_posts: set[int] = set()
 
     def track_task(task: asyncio.Task) -> asyncio.Task:
         background_tasks.add(task)
         task.add_done_callback(background_tasks.discard)
         return task
 
+    def enqueue_post_processing(post_id: int | None) -> None:
+        if post_id is None or post_id in queued_posts:
+            return
+        queued_posts.add(post_id)
+        processing_queue.put_nowait(post_id)
+
+    async def process_queue_loop() -> None:
+        from app.content.link_enricher import enrich_post_links
+        from app.content.local_summary import summarize_post_links
+        from app.content.material_builder import build_post_material
+        from app.content.media_assets import download_link_images_for_post, register_telegram_media_for_post
+        from app.content.pipeline_manager import classify_post
+        from app.content.processor import process_post
+        from app.content.state import mark_state
+        from app.content.url_extractor import extract_post_links
+
+        while True:
+            post_id = await processing_queue.get()
+            queued_posts.discard(post_id)
+            current_status_field: str | None = None
+
+            async def set_processing_status(field_name: str, value: str, error: str | None = None) -> None:
+                error_value = "" if error is None and value in {"running", "processing"} else error
+                async with session_scope(session_factory) as session:
+                    await mark_state(session, post_id, **{field_name: value}, last_error=error_value)
+
+            async def run_queue_stage(field_name: str, label: str, coro) -> Any:
+                nonlocal current_status_field
+                current_status_field = field_name
+                await set_processing_status(field_name, "running", None)
+                logger.info("post_processing_stage_started", extra={"extra": {"post_id": post_id, "stage": label}})
+                result = await coro
+                await set_processing_status(field_name, "done", None)
+                logger.info("post_processing_stage_finished", extra={"extra": {"post_id": post_id, "stage": label}})
+                return result
+
+            lock = None
+            try:
+                while lock is None:
+                    lock = await try_acquire_pipeline_work_lock(settings, owner="collector", entry_id=post_id)
+                    if lock is None:
+                        await asyncio.sleep(2)
+                await run_queue_stage("processing_status", "process_post", process_post(post_id))
+                await run_queue_stage("link_status", "extract_links", extract_post_links(post_id))
+                await run_queue_stage("enrichment_status", "enrich_links", enrich_post_links(post_id))
+                await run_queue_stage("enrichment_status", "telegram_media", register_telegram_media_for_post(post_id))
+                await run_queue_stage("enrichment_status", "link_images", download_link_images_for_post(post_id))
+                await run_queue_stage("summary_status", "summarize_links", summarize_post_links(post_id))
+                await run_queue_stage("material_status", "build_material", build_post_material(post_id, refresh=True))
+                await run_queue_stage("classification_status", "classify_post", classify_post(post_id))
+                async with session_scope(session_factory) as session:
+                    await sync_pipeline_entry_stage(session, post_id)
+            except Exception as exc:
+                if current_status_field:
+                    await set_processing_status(current_status_field, "failed", str(exc)[:800])
+                logger.exception("post_processing_failed", extra={"extra": {"post_id": post_id, "error": str(exc)}})
+            finally:
+                if lock is not None:
+                    await lock.release()
+                processing_queue.task_done()
+
     async def backfill_chats(chats: list[FolderChat], reason: str) -> None:
         total = 0
         logger.info("backfill_started", extra={"extra": {"folder": folder, "chat_count": len(chats), "reason": reason}})
         for chat in chats:
-            total += await sync_chat(client, settings, session_factory, chat)
+            total += await sync_chat(client, settings, session_factory, chat, on_saved_post=enqueue_post_processing)
         logger.info(
             "backfill_finished",
             extra={"extra": {"folder": folder, "chat_count": len(chats), "messages_saved": total, "reason": reason}},
@@ -386,8 +491,10 @@ async def run_service(settings: Settings, folder_name: str | None = None) -> Non
         chat = current_chats.get(resolved_peer_id)
         if chat is None:
             return
+        post_id = None
         async with session_scope(session_factory) as session:
-            await save_message(client, settings, session, chat, event.message)
+            post_id = await save_message(client, settings, session, chat, event.message)
+        enqueue_post_processing(post_id)
 
     @client.on(events.MessageEdited)
     async def on_message_edited(event):
@@ -395,8 +502,10 @@ async def run_service(settings: Settings, folder_name: str | None = None) -> Non
         chat = current_chats.get(resolved_peer_id)
         if chat is None:
             return
+        post_id = None
         async with session_scope(session_factory) as session:
-            await save_message(client, settings, session, chat, event.message, collect_comments=False)
+            post_id = await save_message(client, settings, session, chat, event.message, collect_comments=False)
+        enqueue_post_processing(post_id)
 
     @client.on(events.MessageDeleted)
     async def on_message_deleted(event):
@@ -408,12 +517,14 @@ async def run_service(settings: Settings, folder_name: str | None = None) -> Non
             await mark_messages_deleted(session, resolved_peer_id, list(event.deleted_ids))
 
     refresh_task = asyncio.create_task(refresh_loop())
+    queue_task = track_task(asyncio.create_task(process_queue_loop()))
     track_task(asyncio.create_task(backfill_chats(list(current_chats.values()), "startup")))
     try:
         logger.info("service_started", extra={"extra": {"folder": folder, "chat_count": len(current_chats)}})
         await client.run_until_disconnected()
     finally:
         refresh_task.cancel()
+        queue_task.cancel()
         for task in list(background_tasks):
             task.cancel()
         await asyncio.gather(refresh_task, *background_tasks, return_exceptions=True)

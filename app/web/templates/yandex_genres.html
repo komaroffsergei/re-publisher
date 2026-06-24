@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="toolbar">
+  <div>
+    <h1>Yandex жанры</h1>
+    <p class="muted">Экспериментальная разметка через yandexgpt-5-lite, отдельно от TF-IDF модели.</p>
+  </div>
+  <form method="get" class="filters">
+    <label>Run ID
+      <select name="run_id">
+        <option value="">Все сохраненные</option>
+        {% for run, count, latest in runs %}
+          <option value="{{ run }}" {% if selected_run_id == run %}selected{% endif %}>{{ run }} · {{ count }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Жанр
+      <select name="genre">
+        <option value="">Все жанры</option>
+        {% for genre_name, count in genres %}
+          <option value="{{ genre_name }}" {% if selected_genre == genre_name %}selected{% endif %}>{{ genre_name }} · {{ count }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Лимит <input type="number" name="limit" value="{{ limit }}" min="1" max="500"></label>
+    <button type="submit">Обновить</button>
+  </form>
+</section>
+
+<section class="metric-row">
+  <div class="metric"><strong>{{ stats.rows }}</strong><span>строк в БД</span></div>
+  <div class="metric"><strong>{{ stats.total_tokens }}</strong><span>токенов в выборке</span></div>
+  <div class="metric"><strong>{{ stats.needs_review }}</strong><span>нужна проверка</span></div>
+  <div class="metric"><strong>{{ "%.2f"|format(stats.avg_difficulty|default(0)|float) }}</strong><span>сложность</span></div>
+  <div class="metric"><strong>{{ "%.2f"|format(stats.avg_promo|default(0)|float) }}</strong><span>реклама</span></div>
+  <div class="metric"><strong>{{ "%.2f"|format(stats.avg_opinion|default(0)|float) }}</strong><span>мнение</span></div>
+  <div class="metric"><strong>{{ "%.2f"|format(stats.avg_event|default(0)|float) }}</strong><span>событие</span></div>
+</section>
+
+<article>
+  <h2>Сохраненные результаты</h2>
+  {% if rows %}
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Оригинальный пост</th>
+        <th>Yandex жанр</th>
+        <th>Оси</th>
+        <th>Токены</th>
+        <th>Черновик</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for result, item, post, draft in rows %}
+      <tr>
+        <td>
+          {% if item %}<a href="/processed/{{ item.id }}">{{ result.source_post_id }}</a>{% else %}{{ result.source_post_id }}{% endif %}
+          <div class="status">{{ result.run_id }}</div>
+        </td>
+        <td>
+          <strong>{% if item %}{{ item.translated_title or item.title or "Без заголовка" }}{% else %}Без заголовка{% endif %}</strong>
+          <p class="muted">{{ ((post.text or "") if post else "")[:360] }}</p>
+        </td>
+        <td>
+          <strong>{{ result.genre_primary }}</strong>
+          {% if result.genre_secondary %}<div class="muted">{{ result.genre_secondary|join(", ") }}</div>{% endif %}
+          <div class="status">conf {{ "%.2f"|format(result.genre_confidence|float) if result.genre_confidence is not none else "" }}</div>
+          {% if result.needs_review %}<div class="warning">needs review</div>{% endif %}
+          {% if result.reason %}<div class="muted">{{ result.reason }}</div>{% endif %}
+        </td>
+        <td>
+          <span class="pill">сложн. {{ result.difficulty_score }}</span>
+          <span class="pill">реклама {{ result.promo_score }}</span>
+          <span class="pill">мнение {{ result.opinion_score }}</span>
+          <span class="pill">событие {{ result.event_score }}</span>
+        </td>
+        <td>{{ usage_total_tokens(result.usage) }}</td>
+        <td>
+          <span class="status">{{ draft.status if draft else "нет" }}</span>
+          {% if draft and draft.title %}<div>{{ draft.title }}</div>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p class="muted">В БД пока нет записанных Yandex genre run. Dry-run результаты ниже берутся из artifact-файла.</p>
+  {% endif %}
+</article>
+
+<article>
+  <h2>Последний artifact dry-run</h2>
+  {% if artifact and artifact.rows %}
+    <p class="muted">{{ artifact.run_id }} · {{ artifact.path }}</p>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Оригинальный пост</th>
+          <th>Yandex жанр</th>
+          <th>Оси</th>
+          <th>Токены</th>
+          <th>Черновик</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in artifact.rows %}
+        <tr>
+          <td>
+            {% if row.content_item_id %}<a href="/processed/{{ row.content_item_id }}">{{ row.source_post_id }}</a>{% else %}{{ row.source_post_id }}{% endif %}
+            <div class="status">{{ row.run_id }}</div>
+          </td>
+          <td><p class="muted">{{ (row.original_text or "")[:360] }}</p></td>
+          <td>
+            <strong>{{ row.genre_primary }}</strong>
+            {% if row.genre_secondary %}<div class="muted">{{ row.genre_secondary|join(", ") }}</div>{% endif %}
+            <div class="status">conf {{ "%.2f"|format(row.genre_confidence|float) if row.genre_confidence is not none else "" }}</div>
+            {% if row.needs_review %}<div class="warning">needs review</div>{% endif %}
+            {% if row.reason %}<div class="muted">{{ row.reason }}</div>{% endif %}
+          </td>
+          <td>
+            <span class="pill">сложн. {{ row.difficulty_score }}</span>
+            <span class="pill">реклама {{ row.promo_score }}</span>
+            <span class="pill">мнение {{ row.opinion_score }}</span>
+            <span class="pill">событие {{ row.event_score }}</span>
+          </td>
+          <td>{{ usage_total_tokens(row.usage) }}</td>
+          <td>
+            <span class="status">{{ row.draft_status or "нет" }}</span>
+            {% if row.draft_title %}<div>{{ row.draft_title }}</div>{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">Artifact dry-run пока не найден.</p>
+  {% endif %}
+</article>
+{% endblock %}

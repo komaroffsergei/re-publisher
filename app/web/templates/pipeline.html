@@ -1,0 +1,304 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="pipeline-board-page">
+<section class="toolbar">
+  <div>
+    <h1>Конвейер</h1>
+    <p class="muted">Полный цикл поста: получение из TG, сортировка, обогащение, рерайт, готовность и публикация.</p>
+  </div>
+  <div class="worker-actions">
+    <a class="button" href="/rewrite-progress">Прогресс рерайта</a>
+    <a class="button" href="/pipeline-prompts">Промпты</a>
+  </div>
+</section>
+
+<section class="metric-row pipeline-metrics">
+  <div class="metric"><strong>{{ stats.total }}</strong><span>в конвейере</span></div>
+  {% for stage in stages %}
+    <div class="metric">
+      <strong>{{ stats.stage_counts.get(stage, 0) }}</strong>
+      <span>{{ stage_labels.get(stage, stage) }}</span>
+    </div>
+  {% endfor %}
+</section>
+
+<article>
+  <form method="get" class="pipeline-search">
+    <label>Поиск
+      <input type="search" name="q" value="{{ search_query }}" placeholder="Текст, чат, заголовок, черновик">
+    </label>
+    {% for column in columns %}
+      <input type="hidden" name="{{ column.stage }}_sort" value="{{ column.filters.sort }}">
+      <input type="hidden" name="{{ column.stage }}_order" value="{{ column.filters.order }}">
+      <input type="hidden" name="{{ column.stage }}_limit" value="{{ column.filters.limit }}">
+      <input type="hidden" name="{{ column.stage }}_genre" value="{{ column.filters.genre }}">
+      <input type="hidden" name="{{ column.stage }}_eligible" value="{{ column.filters.eligible }}">
+      <input type="hidden" name="{{ column.stage }}_active" value="{{ column.filters.active }}">
+    {% endfor %}
+    <button type="submit">Найти</button>
+  </form>
+</article>
+
+<section class="kanban-board" aria-label="Конвейер по стадиям">
+  {% for column in columns %}
+    <section class="kanban-column kanban-column-{{ column.stage }}" data-stage="{{ column.stage }}" data-active-only="{{ 'yes' if column.filters.active == 'yes' else 'no' }}">
+      <header class="kanban-column-head">
+        <div>
+          <h2>{{ column.label }}</h2>
+          <p class="muted">{{ column.count }} · показано {{ column.rows|length }}</p>
+        </div>
+        <span class="kanban-count" data-column-count>{{ column.rows|length }}</span>
+      </header>
+
+      <details class="kanban-filter-panel">
+        <summary>Фильтры</summary>
+        <form method="get" class="kanban-filters">
+          <input type="hidden" name="q" value="{{ search_query }}">
+          {% for other in columns %}
+            {% if other.stage != column.stage %}
+              <input type="hidden" name="{{ other.stage }}_sort" value="{{ other.filters.sort }}">
+              <input type="hidden" name="{{ other.stage }}_order" value="{{ other.filters.order }}">
+              <input type="hidden" name="{{ other.stage }}_limit" value="{{ other.filters.limit }}">
+              <input type="hidden" name="{{ other.stage }}_genre" value="{{ other.filters.genre }}">
+              <input type="hidden" name="{{ other.stage }}_eligible" value="{{ other.filters.eligible }}">
+              <input type="hidden" name="{{ other.stage }}_active" value="{{ other.filters.active }}">
+            {% endif %}
+          {% endfor %}
+          <label>Сортировка
+            <select name="{{ column.stage }}_sort">
+              {% for option, label in sort_options.items() %}
+                <option value="{{ option }}" {% if column.filters.sort == option %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>Порядок
+            <select name="{{ column.stage }}_order">
+              <option value="desc" {% if column.filters.order == "desc" %}selected{% endif %}>сначала новые</option>
+              <option value="asc" {% if column.filters.order == "asc" %}selected{% endif %}>сначала старые</option>
+            </select>
+          </label>
+          <label>Жанр
+            <select name="{{ column.stage }}_genre">
+              <option value="">Все</option>
+              {% for genre_name, count in genre_rows %}
+                <option value="{{ genre_name }}" {% if column.filters.genre == genre_name %}selected{% endif %}>{{ genre_name }} · {{ count }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>Подходит
+            <select name="{{ column.stage }}_eligible">
+              <option value="">Все</option>
+              <option value="yes" {% if column.filters.eligible == "yes" %}selected{% endif %}>да</option>
+              <option value="no" {% if column.filters.eligible == "no" %}selected{% endif %}>нет</option>
+            </select>
+          </label>
+          <label>Лимит
+            <input type="number" name="{{ column.stage }}_limit" value="{{ column.filters.limit }}" min="1" max="200">
+          </label>
+          <label class="checkbox-row">
+            <input type="checkbox" name="{{ column.stage }}_active" value="yes" {% if column.filters.active == "yes" %}checked{% endif %}>
+            Только активные
+          </label>
+          <button type="submit">Обновить</button>
+        </form>
+      </details>
+
+      <div class="kanban-cards">
+        {% for entry, item, post, chat, classification, draft, published in column.rows %}
+          {% set board_state = active_states.get(entry.id) or {} %}
+          {% set is_active = board_state.get("active") %}
+          {% set live_text = "" %}
+          {% if is_active %}
+            {% set live_text = board_state.get("label") or "В работе" %}
+          {% elif board_state.get("last_error") %}
+            {% set live_text = "Ошибка: " ~ board_state.get("last_error") %}
+          {% elif board_state.get("progress") is not none %}
+            {% set live_text = "Прогресс: " ~ board_state.get("progress") ~ "%" %}
+          {% endif %}
+          {% set preview = post.text or (item.main_text if item else "") or "" %}
+          {% set title = (item.translated_title if item and item.translated_title else (item.title if item and item.title else preview.split('\n')[0])) or "Без заголовка" %}
+          <a
+            class="kanban-card {% if is_active %}is-active{% endif %} {% if board_state.get('last_error') %}has-error{% endif %} {% if published %}is-published{% endif %} {% if not entry.publication_allowed %}is-blocked{% endif %}"
+            href="/pipeline/{{ entry.id }}"
+            data-entry-id="{{ entry.id }}"
+            data-original-order="{{ loop.index0 }}"
+            data-active="{{ 'true' if is_active else 'false' }}"
+            data-stage="{{ entry.stage }}"
+            data-status="{{ entry.status }}"
+            aria-label="Открыть карточку #{{ entry.id }}: {{ title }}. Стадия {{ column.label }}. Статус {{ entry.status }}"
+          >
+            <div
+              class="kanban-card-markers"
+              title="Маркеры: стадия {{ column.label }}; {{ 'подходит' if entry.is_eligible else 'не подходит' }}{% if entry.genre_primary %}; жанр {{ entry.genre_primary }}{% endif %}{% if draft %}; рерайт есть{% else %}; без рерайта{% endif %}{% if published %}; опубликован{% endif %}{% if not entry.publication_allowed %}; публикация запрещена{% endif %}"
+              aria-label="Маркеры карточки #{{ entry.id }}"
+            >
+              <span class="marker marker-stage" title="Стадия: {{ column.label }}" aria-label="Стадия: {{ column.label }}"></span>
+              {% if entry.is_eligible %}<span class="marker marker-eligible" title="Материал подходит" aria-label="Материал подходит"></span>{% endif %}
+              {% if entry.genre_primary %}<span class="marker marker-genre" title="Жанр: {{ entry.genre_primary }}" aria-label="Жанр: {{ entry.genre_primary }}"></span>{% endif %}
+              {% if draft %}<span class="marker marker-draft" title="Рерайт создан" aria-label="Рерайт создан"></span>{% endif %}
+              {% if published %}<span class="marker marker-published" title="Опубликован" aria-label="Опубликован"></span>{% endif %}
+              {% if not entry.publication_allowed %}<span class="marker marker-blocked" title="Публикация запрещена" aria-label="Публикация запрещена"></span>{% endif %}
+            </div>
+            <div
+              class="kanban-live-badge {% if not live_text %}is-hidden{% endif %} {% if board_state.get('last_error') and not is_active %}is-error{% endif %}"
+              title="{{ board_state.get('last_error') or board_state.get('label') or '' }}"
+            >
+              {{ live_text }}{% if is_active and board_state.get("progress") is not none %} · {{ board_state.get("progress") }}%{% endif %}
+            </div>
+            <div class="kanban-card-top">
+              <strong>#{{ entry.id }}</strong>
+              <span class="status">post {{ entry.source_post_id }}</span>
+            </div>
+            <h3>{{ title }}</h3>
+            <div class="kanban-meta" title="Чат: {{ chat.title if chat else post.chat_peer_id }}&#10;Дата поста: {{ post.date or 'нет' }}&#10;Получен: {{ post.created_at }}&#10;Последняя операция: {{ entry.last_operation_at }}">
+              <span>{{ chat.title if chat else post.chat_peer_id }}</span>
+              <span>{{ post.date or "без даты" }}</span>
+              <span>обн. {{ entry.last_operation_at }}</span>
+            </div>
+            {% if preview %}
+              <p class="line-clamp">{{ preview }}</p>
+            {% endif %}
+            <div class="kanban-pills">
+              <span class="pill" data-status-pill>{{ entry.status }}</span>
+              <span class="pill {% if entry.is_eligible %}ok{% endif %}">{{ "подходит" if entry.is_eligible else "не подходит" }}</span>
+              {% if entry.genre_primary %}<span class="pill">{{ entry.genre_primary }}</span>{% endif %}
+              {% if draft %}<span class="pill ok">рерайт есть</span>{% else %}<span class="pill">без рерайта</span>{% endif %}
+              {% if published %}<span class="pill ok">опубликован</span>{% endif %}
+              {% if not entry.publication_allowed %}<span class="pill danger">запрещен</span>{% endif %}
+            </div>
+            {% if entry.genre_secondary %}
+              <p class="status">{{ entry.genre_secondary|join(", ") }}</p>
+            {% endif %}
+            <div class="axis-row compact">
+              <span class="pill">сложн. {{ entry.difficulty_score if entry.difficulty_score is not none else "?" }}</span>
+              <span class="pill">реклама {{ entry.promo_score if entry.promo_score is not none else "?" }}</span>
+              <span class="pill">событие {{ entry.event_score if entry.event_score is not none else "?" }}</span>
+            </div>
+          </a>
+        {% else %}
+          <p class="muted kanban-empty">Записей нет.</p>
+        {% endfor %}
+      </div>
+    </section>
+  {% endfor %}
+</section>
+</div>
+<script>
+(() => {
+  const cards = Array.from(document.querySelectorAll(".kanban-card[data-entry-id]"));
+  if (!cards.length) return;
+
+  const byId = new Map(cards.map((card) => [card.dataset.entryId, card]));
+  const previousActive = new Map(cards.map((card) => [card.dataset.entryId, card.dataset.active === "true"]));
+
+  function updateColumnCounts() {
+    document.querySelectorAll(".kanban-column").forEach((column) => {
+      const count = column.querySelectorAll(".kanban-card:not([hidden])").length;
+      const node = column.querySelector("[data-column-count]");
+      if (node) node.textContent = String(count);
+    });
+  }
+
+  function compactText(value, maxLength = 96) {
+    const text = String(value || "").trim();
+    if (text.length <= maxLength) return text;
+    return `${text.slice(0, maxLength - 1)}...`;
+  }
+
+  function setBadge(card, text, title, mode) {
+    const badge = card.querySelector(".kanban-live-badge");
+    if (!badge) return;
+    badge.textContent = text || "";
+    badge.title = title || "";
+    badge.classList.toggle("is-hidden", !text);
+    badge.classList.toggle("is-error", mode === "error");
+    badge.classList.toggle("is-updated", mode === "updated");
+  }
+
+  function applyActiveOnly(card) {
+    const column = card.closest(".kanban-column");
+    if (!column) return;
+    const activeOnly = column.dataset.activeOnly === "yes";
+    card.hidden = activeOnly && card.dataset.active !== "true";
+  }
+
+  function moveCardIfNeeded(card, nextStage) {
+    if (!nextStage || card.dataset.stage === nextStage) return;
+    const targetColumn = document.querySelector(`.kanban-column[data-stage="${CSS.escape(nextStage)}"] .kanban-cards`);
+    if (!targetColumn) return;
+    targetColumn.prepend(card);
+    card.dataset.stage = nextStage;
+    card.dataset.originalOrder = "0";
+    card.classList.add("just-updated");
+  }
+
+  function renderCard(entryId, state) {
+    const card = byId.get(String(entryId));
+    if (!card || !state) return;
+
+    const wasActive = previousActive.get(String(entryId)) === true;
+    const active = Boolean(state.active);
+    const hasError = Boolean(state.last_error);
+    moveCardIfNeeded(card, state.stage);
+    if (state.status) {
+      card.dataset.status = state.status;
+      const statusPill = card.querySelector("[data-status-pill]");
+      if (statusPill) statusPill.textContent = state.status;
+    }
+    card.dataset.active = active ? "true" : "false";
+    card.classList.toggle("is-active", active);
+    card.classList.toggle("has-error", hasError && !active);
+    card.style.order = active ? "-1000" : card.dataset.originalOrder || "0";
+
+    if (active) {
+      const progress = state.progress === null || state.progress === undefined ? "" : ` · ${state.progress}%`;
+      setBadge(card, `${state.label || "В работе"}${progress}`, state.last_error || state.label || "", "active");
+      card.classList.remove("just-updated");
+    } else if (hasError) {
+      setBadge(card, `Ошибка: ${compactText(state.last_error, 70)}`, state.last_error, "error");
+      card.classList.remove("just-updated");
+    } else if (wasActive) {
+      card.classList.add("just-updated");
+      setBadge(card, "только что обновлено", state.last_operation_at || "", "updated");
+      window.setTimeout(() => {
+        if (card.dataset.active !== "true") {
+          card.classList.remove("just-updated");
+          setBadge(card, "", "", "");
+          applyActiveOnly(card);
+        }
+      }, 5000);
+    } else if (state.progress !== null && state.progress !== undefined) {
+      setBadge(card, `Прогресс: ${state.progress}%`, state.status || "", "updated");
+    } else {
+      card.classList.remove("just-updated");
+      setBadge(card, "", "", "");
+    }
+    previousActive.set(String(entryId), active);
+    applyActiveOnly(card);
+    updateColumnCounts();
+  }
+
+  async function pollBoardState() {
+    const ids = Array.from(byId.keys());
+    if (!ids.length) return;
+    try {
+      const response = await fetch(`/api/pipeline/board-state?entry_ids=${encodeURIComponent(ids.join(","))}`, {
+        headers: { "Accept": "application/json" },
+        cache: "no-store",
+      });
+      if (!response.ok) return;
+      const payload = await response.json();
+      const entries = payload.entries || {};
+      Object.keys(entries).forEach((entryId) => renderCard(entryId, entries[entryId]));
+    } catch (_error) {
+      // Polling must not break the static board.
+    }
+  }
+
+  cards.forEach((card) => applyActiveOnly(card));
+  updateColumnCounts();
+  pollBoardState();
+  window.setInterval(pollBoardState, 2500);
+})();
+</script>
+{% endblock %}

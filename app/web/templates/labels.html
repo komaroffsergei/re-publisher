@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="toolbar"><h1>Очередь разметки</h1></section>
+{% for row in rows %}
+  {% set queue = row[0] %}{% set processed = row[1] %}{% set item = row[2] %}
+  <article class="item">
+    <h2>Post {{ queue.post_id }}</h2>
+    <p>{{ processed.clean_text or "" }}</p>
+    {% if item %}<p class="muted">{{ item.source_summary or item.title or "" }}</p>{% endif %}
+    <p class="status">suggested={{ queue.suggested_label }} confidence={{ queue.suggested_confidence }}</p>
+    <form method="post" action="/api/labels/{{ queue.post_id }}">
+      <select name="label">
+        {% for label in ["news_digest","technical_research","tool_product","education_guide","opinion_commentary","business_market","promo_career_event","community_chat","humor_meme"] %}
+          <option value="{{ label }}" {% if queue.suggested_label == label %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <input name="reviewer" value="web">
+      <button type="submit">Принять</button>
+    </form>
+  </article>
+{% endfor %}
+{% endblock %}
+

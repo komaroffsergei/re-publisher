@@ -1,0 +1,50 @@
+rules:
+  - showcase: ai_news
+    labels: [news_digest]
+    min_confidence: 0.55
+    require_source_link: false
+    min_quality_score: 0.15
+    rewrite_template: news_short
+  - showcase: ai_technical
+    labels: [technical_research]
+    min_confidence: 0.50
+    require_source_link: false
+    min_quality_score: 0.15
+    rewrite_template: technical_explainer
+  - showcase: ai_tools
+    labels: [tool_product]
+    min_confidence: 0.50
+    require_source_link: false
+    min_quality_score: 0.15
+    rewrite_template: tool_card
+  - showcase: ai_business
+    labels: [business_market]
+    min_confidence: 0.50
+    require_source_link: false
+    min_quality_score: 0.15
+    rewrite_template: business_brief
+  - showcase: ai_education
+    labels: [education_guide]
+    min_confidence: 0.50
+    require_source_link: false
+    min_quality_score: 0.15
+    rewrite_template: education_guide
+  - showcase: ai_humor
+    labels: [humor_meme]
+    min_confidence: 0.50
+    require_source_link: false
+    min_quality_score: 0.05
+    rewrite_template: humor_short
+  - showcase: ai_jobs_events
+    labels: [promo_career_event]
+    min_confidence: 0.50
+    require_source_link: false
+    min_quality_score: 0.05
+    rewrite_template: news_short
+  - showcase: quarantine
+    labels: [community_chat, opinion_commentary]
+    min_confidence: 0.0
+    require_source_link: false
+    min_quality_score: 0.0
+    rewrite_template: news_short
+

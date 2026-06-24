@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="toolbar">
+  <h1>Черновики</h1>
+  <form method="get">
+    <label>Статус <input name="status" value="{{ status or "" }}"></label>
+    <button type="submit">Фильтр</button>
+  </form>
+</section>
+{% for row in rows %}
+  {% set draft = row[0] %}{% set showcase = row[2] %}
+  <article class="item">
+    <div class="item-head">
+      <h2>{{ draft.title or "Без заголовка" }}</h2>
+      <span class="status">{{ draft.status }} · {{ showcase.slug }}</span>
+    </div>
+    <form method="post" action="/api/drafts/{{ draft.id }}/edit">
+      <input name="title" value="{{ draft.title or "" }}">
+      <textarea name="body" rows="7">{{ draft.body }}</textarea>
+      <input name="tags" value="{{ ",".join(draft.tags or []) }}">
+      <button type="submit">Сохранить</button>
+    </form>
+    <form class="inline" method="post" action="/api/drafts/{{ draft.id }}/approve"><button type="submit">Approve</button></form>
+    <form class="inline" method="post" action="/api/drafts/{{ draft.id }}/reject"><button type="submit">Reject</button></form>
+    {% if draft.validation_errors %}<p class="error">{{ draft.validation_errors }}</p>{% endif %}
+    {% if draft.risk_flags %}<p class="warning">{{ draft.risk_flags }}</p>{% endif %}
+  </article>
+{% endfor %}
+{% endblock %}
+

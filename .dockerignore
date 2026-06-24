@@ -8,6 +8,12 @@ __pycache__
 secrets
 sessions
 media
+models
+cache
+artifacts
+reports
+logs
+exports
 *.session
 *.session-journal
 .env

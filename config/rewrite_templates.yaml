@@ -1,0 +1,30 @@
+templates:
+  news_short:
+    title_prefix: ""
+    body_format: "{summary}\n\nИсточник: {source}"
+    max_body_chars: 1800
+  technical_explainer:
+    title_prefix: "Технически:"
+    body_format: "{summary}\n\nПочему важно: материал стоит проверить вручную перед публикацией, если в нем есть claims без источника.\n\nИсточник: {source}"
+    max_body_chars: 2200
+  tool_card:
+    title_prefix: "Инструмент:"
+    body_format: "{summary}\n\nДля кого полезно: разработчикам, редакторам или командам, если это подтверждается источником.\n\nИсточник: {source}"
+    max_body_chars: 1800
+  research_note:
+    title_prefix: "Исследование:"
+    body_format: "{summary}\n\nЧто проверить: метод, датасет и ограничения.\n\nИсточник: {source}"
+    max_body_chars: 2200
+  education_guide:
+    title_prefix: "Гайд:"
+    body_format: "{summary}\n\nИсточник: {source}"
+    max_body_chars: 2200
+  humor_short:
+    title_prefix: ""
+    body_format: "{summary}\n\nИсточник: {source}"
+    max_body_chars: 1000
+  business_brief:
+    title_prefix: "Бизнес:"
+    body_format: "{summary}\n\nКонтекст и цифры требуют проверки по источнику перед публикацией.\n\nИсточник: {source}"
+    max_body_chars: 1800
+

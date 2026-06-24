@@ -14,7 +14,7 @@ from telethon.errors import RPCError, SessionPasswordNeededError
 from app.config import Settings, get_settings
 from app.folders import extract_filter_title, resolve_folder_chats, fetch_dialog_filters
 from app.logging_setup import setup_logging
-from app.sync import run_service, sync_folder
+from app.sync import run_service, sync_folder, sync_folder_full_history
 from app.telegram_client import create_telegram_client
 
 app = typer.Typer(no_args_is_help=True)
@@ -212,6 +212,20 @@ def sync(folder: str = typer.Option(None, "--folder", "-f")) -> None:
         await sync_folder(settings, folder or settings.folder_name)
 
     run_async(_sync())
+
+
+@app.command("sync-full")
+def sync_full(
+    folder: str = typer.Option(None, "--folder", "-f"),
+    comments: bool = typer.Option(False, "--comments/--no-comments", help="Also collect discussion comments during full sync."),
+) -> None:
+    """Sync all available history for every chat in a Telegram folder."""
+
+    async def _sync_full() -> None:
+        settings = settings_or_exit()
+        await sync_folder_full_history(settings, folder or settings.folder_name, collect_comments=comments)
+
+    run_async(_sync_full())
 
 
 @app.command()

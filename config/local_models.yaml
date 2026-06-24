@@ -1,0 +1,10 @@
+summary:
+  default_backend: extractive_fallback
+  optional_backends:
+    rut5_absum: cointegrated/rut5-base-absum
+    rut5_gazeta: IlyaGusev/rut5_base_sum_gazeta
+translation:
+  default_backend: argos
+  target_lang: ru
+  note: Install Argos language packages locally before enabling automatic translation.
+

@@ -19,6 +19,17 @@ secrets/
 sessions/
 *.session
 *.session-journal
-media/
+media/*
+!media/.gitkeep
+exports/
+models/*
+!models/.gitkeep
+cache/*
+!cache/.gitkeep
+artifacts/*
+!artifacts/.gitkeep
+reports/*
+!reports/.gitkeep
+logs/
 
 alembic/versions/__pycache__/

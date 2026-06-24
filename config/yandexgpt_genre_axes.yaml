@@ -1,0 +1,77 @@
+version: yandex_axes_v1
+model: yandexgpt-5-lite
+genres:
+  - slug: news_announcement
+    title_ru: Новости и анонсы
+    description: Новость, релиз, запуск, обновление сервиса или заметный инфоповод.
+    hint: релиз, запуск, обновление, новость
+  - slug: technical_research
+    title_ru: Техническое и исследовательское
+    description: Архитектура, paper, benchmark, датасеты, инженерные детали и разборы.
+    hint: paper, benchmark, архитектура, инженерные детали
+  - slug: tool_product
+    title_ru: Инструмент или продукт
+    description: Описание, демонстрация или обзор инструмента, библиотеки, приложения или AI-сервиса.
+    hint: инструмент, сервис, библиотека, продукт
+  - slug: education_guide
+    title_ru: Обучение и гайд
+    description: Инструкция, учебный материал, объяснение приема, подборка обучающих ресурсов.
+    hint: инструкция, гайд, подборка, обучение
+  - slug: opinion_commentary
+    title_ru: Мнение и комментарий
+    description: Авторская позиция, оценка рынка, рассуждение, спорный тезис или колонка.
+    hint: авторская позиция, оценка, рассуждение
+  - slug: business_market
+    title_ru: Бизнес и рынок
+    description: Деньги, сделки, рынок, стратегия компании, регулирование, корпоративный эффект.
+    hint: деньги, сделки, рынок, стратегия, регулирование
+  - slug: promo_ad
+    title_ru: Реклама и промо
+    description: Продвижение продукта, услуги, канала, курса, консультации или коммерческого предложения.
+    hint: реклама, продажа, промо, коммерческое предложение
+  - slug: career_job
+    title_ru: Вакансии и карьера
+    description: Вакансия, найм, карьерный совет, поиск специалиста, описание роли.
+    hint: вакансия, найм, карьера, роль
+  - slug: event_webinar
+    title_ru: Событие или вебинар
+    description: Приглашение, анонс, запись мероприятия, вебинар, конференция, митап.
+    hint: вебинар, митап, конференция, запись события
+  - slug: community_chat
+    title_ru: Комьюнити и чат
+    description: Вопрос аудитории, короткая реплика, обсуждение, опрос, контекстно-зависимое сообщение.
+    hint: вопрос, опрос, обсуждение, короткая реплика
+  - slug: humor_meme
+    title_ru: Юмор и мемы
+    description: Шутка, мем, реакционная картинка или развлекательная публикация.
+    hint: мем, шутка, развлекательный пост
+  - slug: media_only_unknown
+    title_ru: Медиа без контекста
+    description: Пустой, media-only или слишком короткий пост, где жанр нельзя надежно определить.
+    hint: пустой или media-only без текстового контекста
+axes:
+  difficulty_score: "0 = очень просто или бытовой уровень; 5 = высокая техническая сложность."
+  promo_score: "0 = нет рекламы; 5 = явная реклама или продажа."
+  opinion_score: "0 = нейтральное сообщение; 5 = почти полностью личное мнение автора."
+  event_score: "0 = не событие; 5 = явное приглашение, анонс или запись мероприятия."
+prompt:
+  system: |
+    Ты классификатор Telegram-публикаций об искусственном интеллекте.
+    Используй только данные из поста, заголовка, summary ссылки, домена и flags.
+    Не придумывай факты. Не выводи markdown.
+    Верни только strict JSON: genre_primary, genre_secondary, genre_confidence, difficulty_score, promo_score, opinion_score, event_score, needs_review, reason.
+  user: |
+    Жанры:
+    {genre_list}
+
+    Оси: difficulty_score({difficulty_axis}); promo_score({promo_axis}); opinion_score({opinion_axis}); event_score({event_axis})
+    {reason_rule}
+
+    title: {title}
+    post: {post_text}
+    link_summary: {source_summary}
+    url: {source_url}
+    domain: {source_domain}
+    flags: {flags}
+
+    JSON rules: genre_primary один slug; genre_secondary 0-3 slug; scores integer 0..5; genre_confidence 0..1; needs_review=true если мало данных или неоднозначно.

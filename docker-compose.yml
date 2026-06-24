@@ -1,12 +1,13 @@
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: max_collector
       POSTGRES_USER: max_collector
       POSTGRES_PASSWORD: max_collector
     ports:
-      - "55432:5432"
+      - "127.0.0.1:55432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -17,6 +18,7 @@ services:
 
   app:
     build: .
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
@@ -24,10 +26,98 @@ services:
       - ./secrets/app.env
     environment:
       DB_DSN: postgresql+asyncpg://max_collector:max_collector@postgres:5432/max_collector
+      MEDIA_DIR: /app/media
+      CACHE_DIR: /app/cache
+      ARTIFACTS_DIR: /app/artifacts
+      REPORTS_DIR: /app/reports
+      CLASSIFIER_ACTIVE_MODEL_PATH: /app/models/active/tfidf_logreg.joblib
     command: ["python", "-m", "app.main", "run", "--folder", "MAX"]
     volumes:
       - ./sessions:/app/sessions
       - ./media:/app/media
+      - ./secrets:/app/secrets:ro
+      - ./models:/app/models
+      - ./cache:/app/cache
+      - ./artifacts:/app/artifacts
+      - ./reports:/app/reports
+
+  app-worker:
+    build: .
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ./secrets/app.env
+    environment:
+      DB_DSN: postgresql+asyncpg://max_collector:max_collector@postgres:5432/max_collector
+      MEDIA_DIR: /app/media
+      CACHE_DIR: /app/cache
+      ARTIFACTS_DIR: /app/artifacts
+      REPORTS_DIR: /app/reports
+      CLASSIFIER_ACTIVE_MODEL_PATH: /app/models/active/tfidf_logreg.joblib
+    command: ["python", "-m", "app.content.nightly_maintainer", "run"]
+    profiles: ["worker"]
+    volumes:
+      - ./media:/app/media
+      - ./models:/app/models
+      - ./cache:/app/cache
+      - ./artifacts:/app/artifacts
+      - ./reports:/app/reports
+      - ./secrets:/app/secrets:ro
+
+  web:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ./secrets/app.env
+    environment:
+      DB_DSN: postgresql+asyncpg://max_collector:max_collector@postgres:5432/max_collector
+      MEDIA_DIR: /app/media
+      CACHE_DIR: /app/cache
+      ARTIFACTS_DIR: /app/artifacts
+      REPORTS_DIR: /app/reports
+      CLASSIFIER_ACTIVE_MODEL_PATH: /app/models/active/tfidf_logreg.joblib
+    command: ["uvicorn", "app.web.main:app", "--host", "0.0.0.0", "--port", "8080"]
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./media:/app/media
+      - ./models:/app/models
+      - ./cache:/app/cache
+      - ./artifacts:/app/artifacts
+      - ./reports:/app/reports
+      - ./secrets:/app/secrets:ro
+
+  full-cycle:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ./secrets/app.env
+    environment:
+      DB_DSN: postgresql+asyncpg://max_collector:max_collector@postgres:5432/max_collector
+      MEDIA_DIR: /app/media
+      CACHE_DIR: /app/cache
+      ARTIFACTS_DIR: /app/artifacts
+      REPORTS_DIR: /app/reports
+      CLASSIFIER_ACTIVE_MODEL_PATH: /app/models/active/tfidf_logreg.joblib
+      ENABLE_EXTERNAL_LLM: "true"
+      ENABLE_LOCAL_SUMMARY: "false"
+      ENABLE_TRANSLATION: "false"
+    command: ["python", "-m", "app.content.pipeline_manager", "full-cycle-loop", "--interval-seconds", "30"]
+    volumes:
+      - ./sessions:/app/sessions
+      - ./media:/app/media
+      - ./models:/app/models
+      - ./cache:/app/cache
+      - ./artifacts:/app/artifacts
+      - ./reports:/app/reports
       - ./secrets:/app/secrets:ro
 
 volumes:

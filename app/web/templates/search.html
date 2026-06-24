@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="toolbar">
+  <h1>Поиск</h1>
+  <form method="get">
+    <input name="q" value="{{ q }}" placeholder="Запрос">
+    <input name="label" value="{{ label }}" placeholder="label">
+    <button type="submit">Искать</button>
+  </form>
+</section>
+<table>
+  <thead><tr><th>Тип</th><th>ID</th><th>Заголовок</th><th>Labels</th><th>Домен</th></tr></thead>
+  <tbody>
+  {% for row in rows %}
+    <tr>
+      <td>{{ row.entity_type }}</td>
+      <td>{{ row.entity_id }}</td>
+      <td>{{ row.title or row.body or "" }}</td>
+      <td>{{ row.labels }}</td>
+      <td>{{ row.source_domain or row.source_chat or "" }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
+

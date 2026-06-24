@@ -1,0 +1,66 @@
+version: v1
+labels:
+  - slug: news_digest
+    title_ru: Новости и анонсы
+    description: Сообщения о релизах, событиях рынка ИИ, обновлениях компаний и заметных новостях.
+    positive_examples: ["OpenAI выпустила новую модель", "В сервисе появился новый режим"]
+    negative_examples: ["Пошаговый туториал", "Мем без новостного повода"]
+    routing_hints: [ai_news]
+    rewrite_template: news_short
+  - slug: technical_research
+    title_ru: Техническое и исследовательское
+    description: Papers, benchmarks, архитектура моделей, инженерные детали и технические разборы.
+    positive_examples: ["arXiv paper", "benchmark results", "архитектура модели"]
+    negative_examples: ["скидка на курс", "простая новость без деталей"]
+    routing_hints: [ai_technical, ai_research]
+    rewrite_template: technical_explainer
+  - slug: tool_product
+    title_ru: Инструменты и продукты
+    description: Обзоры, запуск или демонстрация AI-инструментов, приложений, библиотек и сервисов.
+    positive_examples: ["новый AI tool", "плагин для VS Code", "сервис генерирует видео"]
+    negative_examples: ["вакансия", "политическая колонка"]
+    routing_hints: [ai_tools]
+    rewrite_template: tool_card
+  - slug: education_guide
+    title_ru: Обучение и гайды
+    description: Практические инструкции, подборки приемов, explainers и учебные материалы.
+    positive_examples: ["как настроить", "пошаговая инструкция", "гайд"]
+    negative_examples: ["короткий мем", "рынок акций"]
+    routing_hints: [ai_education]
+    rewrite_template: education_guide
+  - slug: opinion_commentary
+    title_ru: Мнение и комментарий
+    description: Авторская оценка, рассуждение, позиция или дискуссионный комментарий.
+    positive_examples: ["я считаю", "почему это важно", "колонка"]
+    negative_examples: ["сухой релиз продукта", "вакансия"]
+    routing_hints: [quarantine]
+    rewrite_template: news_short
+  - slug: business_market
+    title_ru: Бизнес и рынок
+    description: Сделки, инвестиции, выручка, регулирование, рынок труда и корпоративные стратегии.
+    positive_examples: ["раунд инвестиций", "выручка", "регулятор"]
+    negative_examples: ["технический туториал", "мем"]
+    routing_hints: [ai_business]
+    rewrite_template: business_brief
+  - slug: promo_career_event
+    title_ru: Промо, вакансии и события
+    description: Реклама, мероприятия, курсы, вакансии, приглашения и карьерные публикации.
+    positive_examples: ["вебинар", "вакансия", "скидка на курс"]
+    negative_examples: ["исследовательский paper", "новость о релизе"]
+    routing_hints: [ai_jobs_events]
+    rewrite_template: news_short
+  - slug: community_chat
+    title_ru: Комьюнити и чат
+    description: Неформальные обсуждения, вопросы аудитории, короткие реплики и контекстно-зависимые сообщения.
+    positive_examples: ["что думаете?", "опрос", "переписка"]
+    negative_examples: ["полноценная статья", "обзор инструмента"]
+    routing_hints: [quarantine]
+    rewrite_template: news_short
+  - slug: humor_meme
+    title_ru: Юмор и мемы
+    description: Шутки, мемы, развлекательные короткие посты и реакционные картинки.
+    positive_examples: ["мем", "шутка", "смешная картинка"]
+    negative_examples: ["подробный обзор", "рыночная аналитика"]
+    routing_hints: [ai_humor]
+    rewrite_template: humor_short
+

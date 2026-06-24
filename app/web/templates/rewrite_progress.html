@@ -1,0 +1,277 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="toolbar">
+  <div>
+    <h1>Прогресс рерайта</h1>
+    <p class="muted">Общий монитор рерайта по eligible и разрешенным записям конвейера.</p>
+  </div>
+  <a class="button" href="/pipeline">Конвейер</a>
+</section>
+
+<article class="progress-panel" data-progress-page>
+  <div class="item-head">
+    <div>
+      <h2>Общий прогресс</h2>
+      <p class="muted">Обновлено: <span data-updated-at>{{ progress.updated_at }}</span></p>
+    </div>
+    <strong data-main-progress>{{ progress.progress }}%</strong>
+  </div>
+  <progress data-main-progress-bar value="{{ progress.progress }}" max="100"></progress>
+  <div class="metric-row progress-metrics">
+    <div class="metric"><strong data-metric="scope_total">{{ progress.metrics.scope_total }}</strong><span>в scope рерайта</span></div>
+    <div class="metric"><strong data-metric="done">{{ progress.metrics.done }}</strong><span>готовы</span></div>
+    <div class="metric"><strong data-metric="drafts">{{ progress.metrics.drafts }}</strong><span>черновик есть</span></div>
+    <div class="metric"><strong data-metric="waiting">{{ progress.metrics.waiting }}</strong><span>ждут</span></div>
+    <div class="metric"><strong data-metric="running">{{ progress.metrics.running }}</strong><span>в работе</span></div>
+    <div class="metric"><strong data-metric="blocked_pending">{{ progress.metrics.blocked_pending }}</strong><span>ждут summaries</span></div>
+    <div class="metric"><strong data-metric="failed">{{ progress.metrics.failed + progress.metrics.blocked_failed }}</strong><span>ошибки</span></div>
+  </div>
+</article>
+
+<article class="worker-panel" data-worker-panel>
+  <div class="item-head">
+    <div>
+      <h2>Worker рерайта</h2>
+      <p class="muted">
+        <span data-worker-phase>{{ progress.worker.phase }}</span>
+        · циклов: <span data-worker-cycles>{{ progress.worker.cycles }}</span>
+        · heartbeat: <span data-worker-heartbeat>{{ progress.worker.last_heartbeat or "нет" }}</span>
+      </p>
+    </div>
+    <div class="worker-actions">
+      <form data-worker-start-form class="inline worker-start-form">
+        <label>Limit
+          <input type="number" name="limit" value="{{ progress.worker.limit }}" min="1" max="100">
+        </label>
+        <label>Интервал, сек
+          <input type="number" name="interval_seconds" value="{{ progress.worker.interval_seconds }}" min="5" max="3600">
+        </label>
+        <button type="submit" data-worker-start {{ "disabled" if progress.worker.running else "" }}>Запустить worker</button>
+      </form>
+      <button type="button" data-worker-stop {{ "" if progress.worker.running else "disabled" }}>Остановить worker</button>
+    </div>
+  </div>
+  <dl>
+    <dt>Состояние</dt><dd data-worker-running>{{ "работает" if progress.worker.running else "остановлен" }}</dd>
+    <dt>Stop requested</dt><dd data-worker-stop-requested>{{ "да" if progress.worker.stop_requested else "нет" }}</dd>
+    <dt>Последний результат</dt><dd><code data-worker-result>{{ progress.worker.last_result or "нет" }}</code></dd>
+    <dt>Ошибка</dt><dd class="error" data-worker-error>{{ progress.worker.last_error or "" }}</dd>
+  </dl>
+</article>
+
+<section class="grid2">
+  <article class="progress-panel">
+    <div class="item-head">
+      <div>
+        <h2>Summary ссылок</h2>
+        <p class="muted">Article-like ссылки: article, arxiv, telegram.</p>
+      </div>
+      <div class="stack">
+        <strong data-summary-progress>{{ progress.summary_progress }}%</strong>
+        <button type="button" data-reset-link-summary-queue>Сбросить очередь</button>
+      </div>
+    </div>
+    <progress data-summary-progress-bar value="{{ progress.summary_progress }}" max="100"></progress>
+    <p class="muted" data-reset-link-summary-result></p>
+    <dl>
+      <dt>Всего</dt><dd data-metric="article_links">{{ progress.metrics.article_links }}</dd>
+      <dt>Готово</dt><dd data-metric="article_summaries">{{ progress.metrics.article_summaries }}</dd>
+      <dt>Ожидает</dt><dd data-metric="article_pending">{{ progress.metrics.article_pending }}</dd>
+      <dt>Ошибки</dt><dd data-metric="article_failed">{{ progress.metrics.article_failed }}</dd>
+    </dl>
+  </article>
+
+  <article>
+    <h2>Статусы pipeline</h2>
+    <table>
+      <thead><tr><th>Статус</th><th>Кол-во</th></tr></thead>
+      <tbody data-status-rows>
+      {% for row in progress.status_rows %}
+        <tr><td>{{ row.status }}</td><td>{{ row.count }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </article>
+</section>
+
+<section class="grid2">
+  <article>
+    <h2>Статусы attempts</h2>
+    <table>
+      <thead><tr><th>Статус</th><th>Кол-во</th></tr></thead>
+      <tbody data-attempt-rows>
+      {% for row in progress.attempt_rows %}
+        <tr><td>{{ row.status }}</td><td>{{ row.count }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </article>
+
+  <article>
+    <h2>Что смотреть в первую очередь</h2>
+    <ul class="log-list">
+      <li><strong>ждут summaries</strong> — ссылки еще не скачаны или не просуммаризированы, рерайт заблокирован.</li>
+      <li><strong>в работе</strong> — модель сейчас отвечает, страница обновится автоматически.</li>
+      <li><strong>ошибки</strong> — failed summaries или failed rewrite; детали есть в entry и latest attempt.</li>
+    </ul>
+  </article>
+</section>
+
+<article>
+  <h2>Последние попытки рерайта</h2>
+  <table>
+    <thead><tr><th>Attempt</th><th>Entry</th><th>Материал</th><th>Статус</th><th>Модель</th><th>Лог / ошибка</th><th>Дата</th></tr></thead>
+    <tbody data-recent-attempts>
+    {% for row in progress.recent_attempts %}
+      <tr>
+        <td>#{{ row.attempt.id }}</td>
+        <td><a href="/pipeline/{{ row.entry_id }}">#{{ row.entry_id }}</a><div class="status">{{ row.entry_status }}</div></td>
+        <td>{{ row.title }}</td>
+        <td>{{ row.attempt.status }}</td>
+        <td>{{ row.attempt.rewrite_model or "" }}</td>
+        <td>
+          {% if row.entry_error %}<div class="error">{{ row.entry_error }}</div>{% endif %}
+          {% for event in row.attempt.events[:3] %}<div class="status">{{ event }}</div>{% endfor %}
+        </td>
+        <td>{{ row.attempt.finished_at or row.attempt.started_at or row.attempt.created_at }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</article>
+
+<script>
+(() => {
+  const page = document.querySelector("[data-progress-page]");
+  if (!page) return;
+
+  function setText(selector, value) {
+    const node = document.querySelector(selector);
+    if (node) node.textContent = value;
+  }
+
+  function renderRows(selector, rows) {
+    const body = document.querySelector(selector);
+    if (!body) return;
+    body.innerHTML = "";
+    rows.forEach((row) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${row.status}</td><td>${row.count}</td>`;
+      body.appendChild(tr);
+    });
+  }
+
+  function renderRecent(rows) {
+    const body = document.querySelector("[data-recent-attempts]");
+    if (!body) return;
+    body.innerHTML = "";
+    rows.forEach((row) => {
+      const attempt = row.attempt || {};
+      const events = (attempt.events || []).slice(0, 3).map((event) => `<div class="status">${event}</div>`).join("");
+      const error = row.entry_error ? `<div class="error">${row.entry_error}</div>` : "";
+      const date = attempt.finished_at || attempt.started_at || attempt.created_at || "";
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>#${attempt.id || ""}</td>
+        <td><a href="/pipeline/${row.entry_id}">#${row.entry_id}</a><div class="status">${row.entry_status || ""}</div></td>
+        <td>${row.title || ""}</td>
+        <td>${attempt.status || ""}</td>
+        <td>${attempt.rewrite_model || ""}</td>
+        <td>${error}${events}</td>
+        <td>${date}</td>
+      `;
+      body.appendChild(tr);
+    });
+  }
+
+  function renderWorker(worker) {
+    if (!worker) return;
+    setText("[data-worker-phase]", worker.phase || "idle");
+    setText("[data-worker-cycles]", worker.cycles || 0);
+    setText("[data-worker-heartbeat]", worker.last_heartbeat || "нет");
+    setText("[data-worker-running]", worker.running ? "работает" : "остановлен");
+    setText("[data-worker-stop-requested]", worker.stop_requested ? "да" : "нет");
+    setText("[data-worker-result]", worker.last_result ? JSON.stringify(worker.last_result) : "нет");
+    setText("[data-worker-error]", worker.last_error || "");
+    document.querySelector("[data-worker-start]").disabled = Boolean(worker.running);
+    document.querySelector("[data-worker-stop]").disabled = !worker.running;
+  }
+
+  function renderProgress(data) {
+    setText("[data-updated-at]", data.updated_at || "");
+    setText("[data-main-progress]", `${data.progress}%`);
+    setText("[data-summary-progress]", `${data.summary_progress}%`);
+    document.querySelector("[data-main-progress-bar]").value = data.progress || 0;
+    document.querySelector("[data-summary-progress-bar]").value = data.summary_progress || 0;
+    Object.entries(data.metrics || {}).forEach(([key, value]) => {
+      document.querySelectorAll(`[data-metric="${key}"]`).forEach((node) => {
+        node.textContent = value;
+      });
+    });
+    const failedNode = document.querySelector('[data-metric="failed"]');
+    if (failedNode && data.metrics) failedNode.textContent = (data.metrics.failed || 0) + (data.metrics.blocked_failed || 0);
+    renderRows("[data-status-rows]", data.status_rows || []);
+    renderRows("[data-attempt-rows]", data.attempt_rows || []);
+    renderRecent(data.recent_attempts || []);
+    renderWorker(data.worker);
+  }
+
+  async function refresh() {
+    const response = await fetch("/api/rewrite-progress", {headers: {"Accept": "application/json"}});
+    if (!response.ok) return;
+    const data = await response.json();
+    renderProgress(data);
+  }
+
+  const startForm = document.querySelector("[data-worker-start-form]");
+  const stopButton = document.querySelector("[data-worker-stop]");
+  if (startForm) {
+    startForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const formData = new FormData(startForm);
+      const response = await fetch("/api/rewrite-worker/start", {
+        method: "POST",
+        body: formData,
+        headers: {"Accept": "application/json"},
+      });
+      if (response.ok) renderWorker(await response.json());
+      refresh();
+    });
+  }
+  if (stopButton) {
+    stopButton.addEventListener("click", async () => {
+      const response = await fetch("/api/rewrite-worker/stop", {
+        method: "POST",
+        headers: {"Accept": "application/json"},
+      });
+      if (response.ok) renderWorker(await response.json());
+      refresh();
+    });
+  }
+  const resetLinkSummaryButton = document.querySelector("[data-reset-link-summary-queue]");
+  if (resetLinkSummaryButton) {
+    resetLinkSummaryButton.addEventListener("click", async () => {
+      resetLinkSummaryButton.disabled = true;
+      setText("[data-reset-link-summary-result]", "Сбрасываю...");
+      try {
+        const response = await fetch("/api/rewrite-progress/reset-link-summary-queue", {
+          method: "POST",
+          headers: {"Accept": "application/json"},
+        });
+        if (!response.ok) {
+          setText("[data-reset-link-summary-result]", "Ошибка сброса очереди");
+          return;
+        }
+        const data = await response.json();
+        setText("[data-reset-link-summary-result]", `Сброшено: ${data.reset || 0}, attempts: ${data.attempts_reset || 0}`);
+        if (data.progress) renderProgress(data.progress);
+      } finally {
+        resetLinkSummaryButton.disabled = false;
+      }
+    });
+  }
+
+  setInterval(refresh, 5000);
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,214 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="toolbar">
+  <div>
+    <h1>Codex обучение</h1>
+    <p class="muted">Teacher-разметка Codex против candidate-модели tfidf_logreg по жанрам и осям.</p>
+  </div>
+  <form method="get" class="filters">
+    <input type="hidden" name="page" value="1">
+    <label>Run ID
+      <select name="run_id">
+        {% for run in runs %}
+          <option value="{{ run.run_id }}" {% if selected_run_id == run.run_id %}selected{% endif %}>{{ run.run_id }} · {{ run.status }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Поиск
+      <input type="search" name="q" value="{{ search_query }}" placeholder="Заголовок или текст поста">
+    </label>
+    <label>Жанр
+      <select name="genre">
+        <option value="">Все жанры</option>
+        {% for genre_name, count in genres %}
+          <option value="{{ genre_name }}" {% if selected_genre == genre_name %}selected{% endif %}>{{ genre_name }} · {{ count }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Матч
+      <select name="match">
+        <option value="">Все</option>
+        <option value="ok" {% if selected_match == "ok" %}selected{% endif %}>90%+</option>
+        <option value="bad" {% if selected_match == "bad" %}selected{% endif %}>ниже 90%</option>
+      </select>
+    </label>
+    <label>Split
+      <select name="split">
+        <option value="">Все</option>
+        <option value="train" {% if selected_split == "train" %}selected{% endif %}>train</option>
+        <option value="holdout" {% if selected_split == "holdout" %}selected{% endif %}>holdout</option>
+        <option value="train_hard" {% if selected_split == "train_hard" %}selected{% endif %}>train_hard</option>
+      </select>
+    </label>
+    <label>Модель
+      <select name="model_version">
+        <option value="">Все</option>
+        {% for version, count in model_versions %}
+          <option value="{{ version }}" {% if selected_model_version == version %}selected{% endif %}>{{ version }} · {{ count }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Лимит <input type="number" name="limit" value="{{ limit }}" min="1" max="500"></label>
+    <button type="submit">Обновить</button>
+  </form>
+</section>
+
+<section class="metric-row">
+  <div class="metric"><strong>{{ current_run.current_iteration if current_run else 0 }}</strong><span>итерация</span></div>
+  <div class="metric"><strong>{{ stats.labels }}</strong><span>Codex labels</span></div>
+  <div class="metric"><strong>{{ stats.current_comparisons or stats.comparisons }}</strong><span>сравнений текущей модели</span></div>
+  <div class="metric"><strong>{{ "%.2f"|format(stats.latest_match|float) }}%</strong><span>последний</span></div>
+  <div class="metric"><strong>{{ "%.2f"|format(stats.avg_match|float) }}%</strong><span>средний</span></div>
+  <div class="metric"><strong>{{ "%.2f"|format(stats.best_match|float) }}%</strong><span>лучший</span></div>
+  <div class="metric"><strong>{{ "%.2f"|format(stats.worst_match|float) }}%</strong><span>худший текущий</span></div>
+  <div class="metric"><strong>{{ "%.2f"|format(stats.history_worst_match|float) }}%</strong><span>худший исторический</span></div>
+</section>
+
+{% if current_run %}
+<article>
+  <h2>Run state</h2>
+  <dl>
+    <dt>Статус</dt><dd>{{ current_run.status }}</dd>
+    <dt>Модель</dt><dd>{{ current_run.latest_model_version or "нет" }}</dd>
+    <dt>Отчет</dt><dd>{{ current_run.report_path or "нет" }}</dd>
+    <dt>Ошибка</dt><dd>{{ current_run.error or "нет" }}</dd>
+  </dl>
+  {% if current_run.metrics and current_run.metrics.series_snapshot %}
+    {% set snap = current_run.metrics.series_snapshot %}
+    <h2>Series snapshot</h2>
+    <dl>
+      <dt>Series</dt><dd>{{ snap.series_id }}</dd>
+      <dt>Run</dt><dd>{{ snap.run_index }} · {{ snap.run_id }}</dd>
+      <dt>Labels</dt><dd>{{ snap.run_labels }} в run · {{ snap.cumulative_labels }} всего</dd>
+      <dt>Avg match</dt><dd>{{ snap.avg_match_percent }}%{% if snap.delta_latest_match is not none %} · delta {{ snap.delta_latest_match }}{% endif %}</dd>
+      <dt>Primary exact</dt><dd>{{ snap.exact_primary_percent }}%</dd>
+      <dt>Genre overlap</dt><dd>{{ snap.secondary_overlap_percent }}%</dd>
+      <dt>Multi-label model</dt><dd>{{ snap.multi_label_prediction_percent }}%</dd>
+    </dl>
+  {% endif %}
+  {% if series_history %}
+    <h2>История качества</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Run</th>
+          <th>Статус</th>
+          <th>Labels</th>
+          <th>Avg match</th>
+          <th>Delta</th>
+          <th>Primary</th>
+          <th>Overlap</th>
+          <th>Multi-label</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for snap in series_history %}
+        <tr>
+          <td>{{ snap.run_index }}<div class="status">{{ snap.run_id }}</div></td>
+          <td>{{ snap.status }}</td>
+          <td>{{ snap.run_labels }}<div class="status">{{ snap.cumulative_labels }} всего</div></td>
+          <td>{{ snap.avg_match_percent if snap.avg_match_percent is not none else "n/a" }}%</td>
+          <td>{{ snap.delta_latest_match if snap.delta_latest_match is not none else "n/a" }}</td>
+          <td>{{ snap.exact_primary_percent if snap.exact_primary_percent is not none else "n/a" }}%</td>
+          <td>{{ snap.secondary_overlap_percent if snap.secondary_overlap_percent is not none else "n/a" }}%</td>
+          <td>{{ snap.multi_label_prediction_percent if snap.multi_label_prediction_percent is not none else "n/a" }}%</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</article>
+{% endif %}
+
+<article>
+  <h2>Сравнения</h2>
+  <div class="table-head">
+    <div class="muted">
+      Найдено: {{ stats.filtered_comparisons }} · страница {{ page }} из {{ total_pages }} · на странице {{ rows|length }}
+    </div>
+    <div class="pager">
+      {% if has_prev_page %}
+        <a class="button" href="{{ request.url.include_query_params(page=prev_page) }}">Назад</a>
+      {% else %}
+        <span class="button disabled">Назад</span>
+      {% endif %}
+      {% if has_next_page %}
+        <a class="button" href="{{ request.url.include_query_params(page=next_page) }}">Вперед</a>
+      {% else %}
+        <span class="button disabled">Вперед</span>
+      {% endif %}
+    </div>
+  </div>
+  {% if rows %}
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Оригинальный пост</th>
+        <th>Codex анализ</th>
+        <th>Модель</th>
+        <th>Match</th>
+        <th>Split</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for comparison, item, post in rows %}
+      <tr>
+        <td>
+          {% if item %}<a href="/processed/{{ item.id }}">{{ comparison.source_post_id }}</a>{% else %}{{ comparison.source_post_id }}{% endif %}
+          <div class="status">iter {{ comparison.iteration }}</div>
+        </td>
+        <td>
+          <strong>{% if item %}{{ item.translated_title or item.title or "Без заголовка" }}{% else %}Без заголовка{% endif %}</strong>
+          <p class="muted">{{ ((post.text or "") if post else "")[:360] }}</p>
+        </td>
+        <td>
+          <strong>{{ comparison.teacher_genre }}</strong>
+          {% if comparison.teacher_secondary %}<div class="muted">{{ comparison.teacher_secondary|join(", ") }}</div>{% endif %}
+          <div>
+            <span class="pill">сложн. {{ comparison.teacher_axes.difficulty_score }}</span>
+            <span class="pill">реклама {{ comparison.teacher_axes.promo_score }}</span>
+            <span class="pill">мнение {{ comparison.teacher_axes.opinion_score }}</span>
+            <span class="pill">событие {{ comparison.teacher_axes.event_score }}</span>
+          </div>
+        </td>
+        <td>
+          <strong>{{ comparison.predicted_genre }}</strong>
+          {% if comparison.predicted_secondary %}<div class="muted">{{ comparison.predicted_secondary|join(", ") }}</div>{% endif %}
+          <div>
+            <span class="pill">сложн. {{ comparison.predicted_axes.difficulty_score }}</span>
+            <span class="pill">реклама {{ comparison.predicted_axes.promo_score }}</span>
+            <span class="pill">мнение {{ comparison.predicted_axes.opinion_score }}</span>
+            <span class="pill">событие {{ comparison.predicted_axes.event_score }}</span>
+          </div>
+          <div class="status">{{ comparison.model_version }}</div>
+        </td>
+        <td>
+          <strong>{{ "%.2f"|format(comparison.match_percent|float) }}%</strong>
+          {% if comparison.mismatch_flags %}<div class="warning">{{ comparison.mismatch_flags|join(", ") }}</div>{% endif %}
+        </td>
+        <td>{{ comparison.split }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p class="muted">Сравнений пока нет. Запусти codex supervised loop.</p>
+  {% endif %}
+  <div class="table-foot">
+    <div class="pager">
+      {% if has_prev_page %}
+        <a class="button" href="{{ request.url.include_query_params(page=prev_page) }}">Назад</a>
+      {% else %}
+        <span class="button disabled">Назад</span>
+      {% endif %}
+      <span class="status">страница {{ page }} из {{ total_pages }}</span>
+      {% if has_next_page %}
+        <a class="button" href="{{ request.url.include_query_params(page=next_page) }}">Вперед</a>
+      {% else %}
+        <span class="button disabled">Вперед</span>
+      {% endif %}
+    </div>
+  </div>
+</article>
+{% endblock %}

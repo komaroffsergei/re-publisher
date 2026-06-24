@@ -1,0 +1,374 @@
+{% extends "base.html" %}
+{% block content %}
+{% set entry = row[0] %}{% set item = row[1] %}{% set post = row[2] %}{% set chat = row[3] %}{% set classification = row[4] %}{% set draft = row[5] %}{% set published = row[6] %}
+<section class="toolbar">
+  <div>
+    <h1>{{ (item.translated_title if item and item.translated_title else (item.title if item and item.title else ((post.text or "").split('\n')[0]))) or "Запись конвейера" }}</h1>
+    <p class="muted">entry #{{ entry.id }} · post {{ entry.source_post_id }} · {{ chat.title if chat else post.chat_peer_id }}</p>
+  </div>
+  <a class="button" href="/pipeline">Назад</a>
+</section>
+
+<article id="rewrite-status-card" data-entry-id="{{ entry.id }}" class="rewrite-status-card {{ 'is-running' if rewrite_status.is_running else '' }}">
+  <div class="item-head">
+    <div>
+      <h2>Статус рерайта</h2>
+      <p class="muted">
+        <span id="rewrite-state">{{ rewrite_status.status }}</span>
+        {% if rewrite_status.draft_status %} · draft {{ rewrite_status.draft_status }}{% endif %}
+        {% if rewrite_status.latest_attempt %} · attempt #{{ rewrite_status.latest_attempt.id }} {{ rewrite_status.latest_attempt.status }}{% endif %}
+      </p>
+    </div>
+    <div class="worker-actions">
+      <form id="rewrite-form" method="post" action="/api/pipeline/{{ entry.id }}/rewrite" class="inline">
+        <button id="rewrite-button" type="submit">{{ "Рерайт выполняется" if rewrite_status.is_running else "Повторить рерайт" }}</button>
+      </form>
+      <form id="pipeline-form" method="post" action="/api/pipeline/{{ entry.id }}/run-pipeline" class="inline">
+        <button id="pipeline-button" type="submit">Pipeline</button>
+      </form>
+    </div>
+  </div>
+  <progress id="rewrite-progress" value="{{ rewrite_status.progress }}" max="100"></progress>
+  <p id="rewrite-error" class="error">{{ rewrite_status.last_error or "" }}</p>
+  <div>
+    <h3>Лог</h3>
+    <ul id="rewrite-log" class="log-list">
+      {% for event in rewrite_status.events %}
+        <li>{{ event }}</li>
+      {% else %}
+        <li class="muted">Событий рерайта пока нет.</li>
+      {% endfor %}
+    </ul>
+  </div>
+  <div>
+    <h3>Pipeline</h3>
+    <p class="muted"><span id="pipeline-state">idle</span></p>
+    <p id="pipeline-error" class="error"></p>
+    <ul id="pipeline-log" class="log-list">
+      <li class="muted">Pipeline еще не запускался.</li>
+    </ul>
+  </div>
+</article>
+
+<section class="grid2">
+  <article>
+    <h2>Оригинал</h2>
+    {% if post_segments %}
+      <div class="linked-text">{% for segment in post_segments %}{% if segment.url %}<a href="{{ segment.url }}" target="_blank" rel="noopener noreferrer">{{ segment.text }}</a>{% else %}{{ segment.text }}{% endif %}{% endfor %}</div>
+    {% else %}
+      <pre>{{ (item.main_text if item else post.text) or "" }}</pre>
+    {% endif %}
+    <dl>
+      <dt>Дата</dt><dd>{{ post.date or "" }}</dd>
+      <dt>Источник</dt><dd>{% if source_post_url %}<a href="{{ source_post_url }}" target="_blank" rel="noopener noreferrer">{{ source_post_url }}</a>{% else %}{{ (item.source_url or item.source_domain) if item else "нет" }}{% endif %}</dd>
+      <dt>Summary</dt><dd>{{ (item.translated_summary or item.source_summary) if item else "нет" }}</dd>
+    </dl>
+  </article>
+  <article>
+    <h2>Рерайт</h2>
+    {% if draft %}
+      {% if draft.image_asset_id %}<img class="preview" src="/media/{{ draft.image_asset_id }}" alt="draft media">{% endif %}
+      <p><strong>{{ draft.title or "" }}</strong></p>
+      {% if draft_segments %}
+        <div class="linked-text draft-text">{% for segment in draft_segments %}{% if segment.url %}<a href="{{ segment.url }}" target="_blank" rel="noopener noreferrer">{{ segment.text }}</a>{% else %}{{ segment.text }}{% endif %}{% endfor %}</div>
+      {% else %}
+        <pre>{{ draft.body }}</pre>
+      {% endif %}
+      <dl>
+        <dt>Статус</dt><dd>{{ draft.status }}</dd>
+        <dt>Модель</dt><dd>{{ draft.rewrite_model or "нет" }}</dd>
+        <dt>Промпт</dt><dd>{{ draft.rewrite_template or "нет" }}</dd>
+        <dt>Risk</dt><dd>{{ draft.risk_flags or [] }}</dd>
+        <dt>Validation</dt><dd>{{ draft.validation_errors or [] }}</dd>
+        <dt>Similarity</dt><dd>{{ draft.similarity_to_original }}</dd>
+      </dl>
+    {% else %}
+      <p class="muted">Черновик пока не создан.</p>
+    {% endif %}
+  </article>
+</section>
+
+{% if media_assets %}
+<article>
+  <h2>Медиа</h2>
+  <div class="media-grid">
+    {% for asset in media_assets %}
+      <figure class="media-thumb">
+        {% if asset.mime_type and asset.mime_type.startswith("video/") %}
+          <video src="/media/{{ asset.id }}" controls></video>
+        {% else %}
+          <img src="/media/{{ asset.id }}" alt="media {{ asset.id }}">
+        {% endif %}
+        <figcaption>
+          <span>{{ asset.source_type }}</span>
+          <span>#{{ asset.id }}</span>
+          {% if asset.mime_type %}<span>{{ asset.mime_type }}</span>{% endif %}
+        </figcaption>
+      </figure>
+    {% endfor %}
+  </div>
+</article>
+{% endif %}
+
+<article>
+  <h2>Ссылки</h2>
+  {% if link_rows %}
+  <div class="link-list">
+    {% for link in link_rows %}
+      <div class="link-row">
+        <div>
+          <a href="{{ link.url or link.original_url }}" target="_blank" rel="noopener noreferrer">{{ link.title or link.url or link.original_url }}</a>
+          <p class="muted">{{ link.url or link.original_url }}</p>
+        </div>
+        <div class="link-meta">
+          <span class="pill">{{ link.url_type or "link" }}</span>
+          <span class="pill">{{ link.extraction_status or "pending" }}</span>
+          {% if link.is_primary %}<span class="pill ok">primary</span>{% endif %}
+          {% if link.is_article_like %}<span class="pill">article-like</span>{% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+  {% else %}
+    <p class="muted">Ссылок нет.</p>
+  {% endif %}
+</article>
+
+<article>
+  <h2>Материалы по ссылкам</h2>
+  {% set materials = namespace(has=false) %}
+  {% for link in link_rows %}
+    {% if link.is_article_like %}
+      {% set materials.has = true %}
+      <section class="link-material">
+        <div class="item-head">
+          <div>
+            <h3><a href="{{ link.url or link.original_url }}" target="_blank" rel="noopener noreferrer">{{ link.title or link.url or link.original_url }}</a></h3>
+            <p class="muted">{{ link.url or link.original_url }}</p>
+          </div>
+          <div class="link-meta">
+            <span class="pill">{{ link.extraction_status or "pending" }}</span>
+            {% if link.summary_model %}<span class="pill">{{ link.summary_model }}</span>{% endif %}
+          </div>
+        </div>
+        {% if link.error %}<p class="error">{{ link.error }}</p>{% endif %}
+        <div class="link-material-grid">
+          <div>
+            <h4>Оригинал</h4>
+            <pre class="text-box">{{ link.extracted_text or "нет" }}</pre>
+          </div>
+          <div>
+            <h4>Summary</h4>
+            <pre class="text-box">{{ link.summary or "нет" }}</pre>
+          </div>
+        </div>
+      </section>
+    {% endif %}
+  {% endfor %}
+  {% if not materials.has %}
+    <p class="muted">Article-like материалов нет.</p>
+  {% endif %}
+</article>
+
+<article>
+  <h2>Классификация и публикация</h2>
+  <div class="grid2">
+    <dl>
+      <dt>Жанр</dt><dd>{{ entry.genre_primary or "нет" }}</dd>
+      <dt>Secondary</dt><dd>{{ entry.genre_secondary|join(", ") if entry.genre_secondary else "нет" }}</dd>
+      <dt>Оси</dt>
+      <dd>
+        <span class="pill">сложн. {{ entry.difficulty_score }}</span>
+        <span class="pill">реклама {{ entry.promo_score }}</span>
+        <span class="pill">мнение {{ entry.opinion_score }}</span>
+        <span class="pill">событие {{ entry.event_score }}</span>
+      </dd>
+      <dt>Rule</dt><dd>{{ entry.eligibility_reason or "нет" }}</dd>
+      <dt>Model</dt><dd>{{ entry.classification_model_version or "нет" }}</dd>
+    </dl>
+    <div>
+      <p>
+        <span class="pill">{{ entry.status }}</span>
+        <span class="pill">{{ "разрешена" if entry.publication_allowed else "запрещена" }}</span>
+        <span class="pill">{{ "опубликована" if published else "не опубликована" }}</span>
+      </p>
+      <form method="post" action="/api/pipeline/{{ entry.id }}/schedule" class="stack narrow-form">
+        <label>Дата автоматической публикации
+          <input type="datetime-local" name="scheduled_publish_at" value="{{ entry.scheduled_publish_at.strftime('%Y-%m-%dT%H:%M') if entry.scheduled_publish_at else '' }}">
+        </label>
+        <button type="submit">Сохранить дату</button>
+      </form>
+      {% if entry.publication_allowed %}
+        <form method="post" action="/api/pipeline/{{ entry.id }}/block" class="stack narrow-form">
+          <input type="text" name="reason" placeholder="Причина запрета">
+          <button type="submit">Убрать с публикации</button>
+        </form>
+      {% else %}
+        <form method="post" action="/api/pipeline/{{ entry.id }}/allow" class="inline"><button type="submit">Вернуть в публикацию</button></form>
+      {% endif %}
+    </div>
+  </div>
+</article>
+
+<article>
+  <h2>История рерайтов</h2>
+  {% if attempts %}
+  <table>
+    <thead><tr><th>ID</th><th>Статус</th><th>Промпт</th><th>Модель</th><th>Risk</th><th>Ошибка</th><th>Дата</th></tr></thead>
+    <tbody>
+    {% for attempt, prompt in attempts %}
+      <tr>
+        <td>{{ attempt.id }}</td>
+        <td>{{ attempt.status }}</td>
+        <td>{{ prompt.version if prompt else "нет" }}</td>
+        <td>{{ attempt.rewrite_model or "" }}</td>
+        <td>{{ attempt.risk_flags or [] }}</td>
+        <td>{{ attempt.error or "" }}</td>
+        <td>{{ attempt.finished_at or attempt.started_at or attempt.created_at }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p class="muted">Попыток рерайта пока нет.</p>
+  {% endif %}
+</article>
+<script>
+(() => {
+  const card = document.getElementById("rewrite-status-card");
+  const form = document.getElementById("rewrite-form");
+  if (!card || !form) return;
+  const pipelineForm = document.getElementById("pipeline-form");
+  const entryId = card.dataset.entryId;
+  const button = document.getElementById("rewrite-button");
+  const pipelineButton = document.getElementById("pipeline-button");
+  const progress = document.getElementById("rewrite-progress");
+  const state = document.getElementById("rewrite-state");
+  const error = document.getElementById("rewrite-error");
+  const log = document.getElementById("rewrite-log");
+  const pipelineState = document.getElementById("pipeline-state");
+  const pipelineError = document.getElementById("pipeline-error");
+  const pipelineLog = document.getElementById("pipeline-log");
+  let pollTimer = null;
+  let pipelinePollTimer = null;
+
+  function setEvents(events) {
+    log.innerHTML = "";
+    const rows = events && events.length ? events : ["Событий рерайта пока нет."];
+    rows.forEach((event) => {
+      const item = document.createElement("li");
+      item.textContent = event;
+      if (!events || !events.length) item.className = "muted";
+      log.appendChild(item);
+    });
+  }
+
+  function setPipelineEvents(events) {
+    pipelineLog.innerHTML = "";
+    const rows = events && events.length ? events : ["Pipeline еще не запускался."];
+    rows.forEach((event) => {
+      const item = document.createElement("li");
+      item.textContent = event;
+      if (!events || !events.length) item.className = "muted";
+      pipelineLog.appendChild(item);
+    });
+  }
+
+  function renderStatus(data) {
+    state.textContent = data.status || "";
+    error.textContent = data.last_error || "";
+    progress.value = data.progress || 0;
+    card.classList.toggle("is-running", Boolean(data.is_running));
+    button.disabled = Boolean(data.is_running);
+    button.textContent = data.is_running ? "Рерайт выполняется" : "Повторить рерайт";
+    setEvents(data.events || []);
+    if (!data.is_running && pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+    return data;
+  }
+
+  async function loadStatus() {
+    const response = await fetch(`/api/pipeline/${entryId}/rewrite-status`, {headers: {"Accept": "application/json"}});
+    if (!response.ok) return null;
+    return renderStatus(await response.json());
+  }
+
+  function renderPipelineStatus(data) {
+    const active = data.active || (data.result && data.result.active);
+    const isBusy = Boolean(data.busy || (data.result && data.result.busy));
+    pipelineState.textContent = isBusy && active && active.entry_id
+      ? `busy: сейчас в работе #${active.entry_id}`
+      : (data.phase || "idle");
+    pipelineError.textContent = data.error || "";
+    pipelineButton.disabled = Boolean(data.running);
+    pipelineButton.textContent = data.running ? "Pipeline выполняется" : "Pipeline";
+    const events = data.events || [];
+    setPipelineEvents(isBusy && active && active.entry_id ? [...events, `ожидает: сейчас в работе #${active.entry_id}`] : events);
+    if (!data.running && pipelinePollTimer) {
+      clearInterval(pipelinePollTimer);
+      pipelinePollTimer = null;
+      loadStatus();
+      if (data.phase === "done") window.setTimeout(() => window.location.reload(), 900);
+    }
+    return data;
+  }
+
+  async function loadPipelineStatus() {
+    const response = await fetch(`/api/pipeline/${entryId}/pipeline-status`, {headers: {"Accept": "application/json"}});
+    if (!response.ok) return null;
+    return renderPipelineStatus(await response.json());
+  }
+
+  function startPolling() {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(loadStatus, 1500);
+  }
+
+  function startPipelinePolling() {
+    if (pipelinePollTimer) clearInterval(pipelinePollTimer);
+    pipelinePollTimer = setInterval(loadPipelineStatus, 1500);
+  }
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    button.disabled = true;
+    button.textContent = "Рерайт выполняется";
+    card.classList.add("is-running");
+    progress.value = 15;
+    setEvents(["rewrite requested"]);
+    startPolling();
+    try {
+      await fetch(form.action, {
+        method: "POST",
+        headers: {"Accept": "application/json", "X-Requested-With": "fetch"},
+      });
+    } finally {
+      const data = await loadStatus();
+      if (data && !data.is_running) {
+        window.setTimeout(() => window.location.reload(), 900);
+      }
+    }
+  });
+
+  if (pipelineForm) {
+    pipelineForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      pipelineButton.disabled = true;
+      pipelineButton.textContent = "Pipeline выполняется";
+      setPipelineEvents(["pipeline requested"]);
+      startPipelinePolling();
+      const response = await fetch(pipelineForm.action, {
+        method: "POST",
+        headers: {"Accept": "application/json", "X-Requested-With": "fetch"},
+      });
+      if (response.ok) renderPipelineStatus(await response.json());
+    });
+    loadPipelineStatus();
+  }
+
+  if (card.classList.contains("is-running")) startPolling();
+})();
+</script>
+{% endblock %}

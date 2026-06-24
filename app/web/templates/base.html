@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title or "Re Publisher" }}</title>
+  <link rel="stylesheet" href="/static/styles.css?v=kanban-live-20260622-1">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/processed">Re Publisher</a>
+    <nav>
+      <a href="/processed">Материалы</a>
+      <a href="/yandex-genres">Yandex жанры</a>
+      <a href="/codex-training">Codex обучение</a>
+      <a href="/drafts">Черновики</a>
+      <a href="/labels">Разметка</a>
+      <a href="/models">Модели</a>
+      <a href="/pipeline">Конвейер</a>
+      <a href="/rewrite-progress">Прогресс рерайта</a>
+      <a href="/pipeline-prompts">Промпты</a>
+      <a href="/search">Поиск</a>
+    </nav>
+  </header>
+  <main class="page">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

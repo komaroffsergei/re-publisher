@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="toolbar">
+  <div>
+    <h1>Промпты</h1>
+    <p class="muted">Сохранение создает новую active-версию для выбранного промпта.</p>
+  </div>
+  <a class="button" href="/pipeline">Конвейер</a>
+</section>
+
+{% for prompt in prompts %}
+<article class="prompt-card">
+  <div class="item-head">
+    <div>
+      <h2>{{ prompt.title }}</h2>
+      <p class="muted">{{ prompt.description }} Активная версия #{{ prompt.active.version }}.</p>
+    </div>
+    <span class="pill">{{ prompt.name }}</span>
+  </div>
+
+  <form method="post" class="prompt-form">
+    <input type="hidden" name="prompt_name" value="{{ prompt.name }}">
+    <label>System prompt
+      <textarea name="system_prompt" rows="8">{{ prompt.active.system_prompt }}</textarea>
+    </label>
+    <label>User prompt template
+      <textarea name="common_user_prompt" rows="14">{{ prompt.active.common_user_prompt }}</textarea>
+    </label>
+    {% if prompt.name == "pipeline_rewrite" %}
+    <label>Жанровые инструкции JSON
+      <textarea name="label_prompts_json" rows="18">{{ prompt.labels_json }}</textarea>
+    </label>
+    {% else %}
+    <input type="hidden" name="label_prompts_json" value="{}">
+    {% endif %}
+    <button type="submit">Сохранить новую версию</button>
+  </form>
+
+  <h2>История версий</h2>
+  <table>
+    <thead><tr><th>Версия</th><th>Active</th><th>Автор</th><th>Дата</th></tr></thead>
+    <tbody>
+    {% for version in prompt.versions %}
+      <tr>
+        <td>{{ version.version }}</td>
+        <td>{{ "да" if version.is_active else "нет" }}</td>
+        <td>{{ version.created_by or "" }}</td>
+        <td>{{ version.created_at }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</article>
+{% endfor %}
+{% endblock %}

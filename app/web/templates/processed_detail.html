@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block content %}
+{% set item = row[0] %}{% set post = row[1] %}{% set chat = row[2] %}{% set cls = row[3] %}{% set draft = row[4] %}
+<section class="toolbar">
+  <h1>{{ item.translated_title or item.title or "Материал" }}</h1>
+  <a class="button" href="/processed">Назад</a>
+</section>
+<section class="grid2">
+  <article>
+    <h2>Материал</h2>
+    {% if assets %}
+      {% for asset in assets %}
+        {% if asset.id == item.primary_image_asset_id %}
+          <img class="preview" src="/media/{{ asset.id }}" alt="media preview">
+        {% endif %}
+      {% endfor %}
+    {% else %}
+      <p class="warning">Медиа для материала пока не найдено.</p>
+    {% endif %}
+    <p>{{ item.translated_summary or item.source_summary or item.main_text or "" }}</p>
+    <dl>
+      <dt>Источник</dt><dd>{{ item.source_url or item.source_domain or "" }}</dd>
+      <dt>Image asset</dt><dd>{{ item.primary_image_asset_id or "нет" }}</dd>
+      <dt>Качество</dt><dd>{{ item.quality_score }}</dd>
+      <dt>Метка</dt><dd>{{ cls.label_primary if cls else "" }} {{ cls.confidence if cls else "" }}</dd>
+    </dl>
+  </article>
+  <article>
+    <h2>Telegram</h2>
+    <p>{{ post.text or "" }}</p>
+    <dl>
+      <dt>Чат</dt><dd>{{ chat.title if chat else post.chat_peer_id }}</dd>
+      <dt>Дата</dt><dd>{{ post.date }}</dd>
+      <dt>Просмотры</dt><dd>{{ post.views or "" }}</dd>
+    </dl>
+  </article>
+</section>
+<section>
+  <h2>Ссылки и обогащение</h2>
+  <table>
+    <thead><tr><th>URL</th><th>Тип</th><th>Статус</th><th>Snapshot</th><th>Image URL</th><th>Image asset</th><th>Ошибка</th></tr></thead>
+    <tbody>
+    {% for link, snapshot in links %}
+      <tr>
+        <td>{{ link.canonical_url or link.original_url }}</td>
+        <td>{{ link.url_type }}</td>
+        <td>{{ link.extraction_status }}</td>
+        <td>{{ snapshot.title if snapshot else "нет" }}</td>
+        <td>{{ snapshot.image_url if snapshot else "" }}</td>
+        <td>{{ snapshot.image_asset_id if snapshot else "" }}</td>
+        <td>{{ snapshot.error if snapshot else "" }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% for draft in drafts %}
+  <section>
+    <h2>Черновик #{{ draft.id }}</h2>
+    <p><strong>{{ draft.title or "" }}</strong></p>
+    {% if draft.image_asset_id %}<img class="preview" src="/media/{{ draft.image_asset_id }}" alt="draft media">{% endif %}
+    <pre>{{ draft.body }}</pre>
+    <dl>
+      <dt>Статус</dt><dd>{{ draft.status }}</dd>
+      <dt>Risk flags</dt><dd>{{ draft.risk_flags or [] }}</dd>
+      <dt>Validation</dt><dd>{{ draft.validation_errors or [] }}</dd>
+      <dt>Similarity</dt><dd>{{ draft.similarity_to_original }}</dd>
+    </dl>
+  </section>
+{% endfor %}
+{% endblock %}

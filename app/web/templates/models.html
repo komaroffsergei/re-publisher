@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="toolbar"><h1>Модели</h1></section>
+<table>
+  <thead><tr><th>ID</th><th>Версия</th><th>Статус</th><th>Train</th><th>Val</th><th>Test</th><th>Artifact</th><th></th></tr></thead>
+  <tbody>
+  {% for model in models %}
+    <tr>
+      <td>{{ model.id }}</td>
+      <td>{{ model.model_version }}</td>
+      <td><span class="status">{{ model.status }}</span></td>
+      <td>{{ model.train_size or "" }}</td>
+      <td>{{ model.val_size or "" }}</td>
+      <td>{{ model.test_size or "" }}</td>
+      <td>{{ model.artifact_path }}</td>
+      <td><form method="post" action="/api/models/{{ model.id }}/promote"><button type="submit">Promote</button></form></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
+
