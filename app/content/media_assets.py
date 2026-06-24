@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import mimetypes
 import shutil
 from datetime import datetime, timezone
@@ -8,15 +9,20 @@ from pathlib import Path
 
 import typer
 from PIL import Image
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert
+from telethon import utils
 
 from app.content.common import limit_option, run_async, session_factory, settings_or_exit
 from app.content.link_enricher import fetch_url
 from app.main import safe_echo
 from app.models import LinkSnapshot, MediaAsset, PostLink, TelegramPost
+from app.serializers import media_type as telegram_media_type
+from app.sync import maybe_download_media
+from app.telegram_client import create_telegram_client
 
 app = typer.Typer(no_args_is_help=True)
+logger = logging.getLogger(__name__)
 
 
 @app.callback()
@@ -167,6 +173,80 @@ async def register_telegram_media_for_post(post_id: int) -> int:
     return count
 
 
+def telethon_entity_ref(chat_peer_id: int):
+    real_id, peer_type = utils.resolve_id(chat_peer_id)
+    return peer_type(real_id)
+
+
+async def download_missing_telegram_media(limit: int, *, eligible_only: bool = False) -> int:
+    settings = settings_or_exit()
+    factory = session_factory(settings)
+    client = create_telegram_client(settings)
+    await client.connect()
+    downloaded_count = 0
+    try:
+        if not await client.is_user_authorized():
+            raise RuntimeError("Telegram session is not authorized. Run: python -m app.main login")
+        async with factory() as session:
+            stmt = (
+                select(TelegramPost)
+                .where(
+                    TelegramPost.media_type.is_not(None),
+                    or_(TelegramPost.media_path.is_(None), TelegramPost.media_path == ""),
+                    TelegramPost.is_deleted.is_(False),
+                )
+                .order_by(TelegramPost.updated_at.desc(), TelegramPost.id.desc())
+                .limit(limit)
+            )
+            if eligible_only:
+                from app.models import PipelineEntry
+
+                stmt = stmt.join(PipelineEntry, PipelineEntry.source_post_id == TelegramPost.id).where(
+                    PipelineEntry.is_eligible.is_(True)
+                )
+            posts = list((await session.execute(stmt)).scalars())
+        for post in posts:
+            try:
+                entity = telethon_entity_ref(int(post.chat_peer_id))
+                message = await client.get_messages(entity, ids=int(post.message_id))
+                if not message:
+                    continue
+                media_path = await maybe_download_media(
+                    settings,
+                    message,
+                    int(post.chat_peer_id),
+                    int(post.message_id),
+                    force=True,
+                )
+                if not media_path:
+                    continue
+                async with factory() as session:
+                    await session.execute(
+                        update(TelegramPost)
+                        .where(TelegramPost.id == post.id)
+                        .values(media_path=media_path, media_type=telegram_media_type(message), updated_at=datetime.now(timezone.utc))
+                    )
+                    await session.commit()
+                await register_telegram_media_for_post(int(post.id))
+                downloaded_count += 1
+            except Exception as exc:
+                logger.warning(
+                    "telegram_media_backfill_failed",
+                    extra={
+                        "extra": {
+                            "post_id": int(post.id),
+                            "chat_peer_id": int(post.chat_peer_id),
+                            "message_id": int(post.message_id),
+                            "error": str(exc),
+                        }
+                    },
+                )
+                continue
+    finally:
+        await client.disconnect()
+    return downloaded_count
+
+
 async def download_link_images(limit: int) -> int:
     settings = settings_or_exit()
     factory = session_factory(settings)
@@ -273,6 +353,17 @@ def download_pending_command(limit: int = limit_option(100)) -> None:
 
     count = run_async(register_telegram_media(limit)) + run_async(download_link_images(limit))
     safe_echo(f"media_assets={count}")
+
+
+@app.command("backfill-telegram")
+def backfill_telegram_command(
+    limit: int = limit_option(100),
+    eligible_only: bool = typer.Option(False, "--eligible-only", help="Download Telegram media only for eligible pipeline entries."),
+) -> None:
+    """Download Telegram media for already stored posts and register media assets."""
+
+    count = run_async(download_missing_telegram_media(limit, eligible_only=eligible_only))
+    safe_echo(f"telegram_media_downloaded={count}")
 
 
 if __name__ == "__main__":

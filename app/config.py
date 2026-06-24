@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     db_dsn: str = Field(validation_alias="DB_DSN")
     collect_comments: bool = Field(default=True, validation_alias="COLLECT_COMMENTS")
     collector_process_saved_posts: bool = Field(default=True, validation_alias="COLLECTOR_PROCESS_SAVED_POSTS")
-    download_media: bool = Field(default=False, validation_alias="DOWNLOAD_MEDIA")
+    download_media: bool = Field(default=True, validation_alias="DOWNLOAD_MEDIA")
     media_dir: str = Field(default="./media", validation_alias="MEDIA_DIR")
     sync_limit_per_chat: int = Field(default=0, ge=0, validation_alias="SYNC_LIMIT_PER_CHAT")
     folder_refresh_seconds: int = Field(default=300, ge=10, validation_alias="FOLDER_REFRESH_SECONDS")

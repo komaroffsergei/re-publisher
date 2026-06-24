@@ -63,7 +63,7 @@ def build_post_upsert(data: dict[str, Any]):
             "forwards": stmt.excluded.forwards,
             "replies_count": stmt.excluded.replies_count,
             "media_type": stmt.excluded.media_type,
-            "media_path": stmt.excluded.media_path,
+            "media_path": func.coalesce(stmt.excluded.media_path, table.c.media_path),
             "raw": stmt.excluded.raw,
             "is_deleted": stmt.excluded.is_deleted,
             "updated_at": func.now(),
@@ -85,7 +85,7 @@ def build_comment_upsert(data: dict[str, Any]):
             "edit_date": stmt.excluded.edit_date,
             "text": stmt.excluded.text,
             "media_type": stmt.excluded.media_type,
-            "media_path": stmt.excluded.media_path,
+            "media_path": func.coalesce(stmt.excluded.media_path, table.c.media_path),
             "raw": stmt.excluded.raw,
             "is_deleted": stmt.excluded.is_deleted,
             "updated_at": func.now(),
@@ -163,8 +163,10 @@ async def maybe_download_media(
     message: Any,
     chat_peer_id: int | None,
     message_id: int,
+    *,
+    force: bool = False,
 ) -> str | None:
-    if not settings.download_media or getattr(message, "media", None) is None or chat_peer_id is None:
+    if (not force and not settings.download_media) or getattr(message, "media", None) is None or chat_peer_id is None:
         return None
     target_dir = Path(settings.media_dir) / str(chat_peer_id) / str(message_id)
     target_dir.mkdir(parents=True, exist_ok=True)
