@@ -9,7 +9,7 @@ from typing import Any
 
 import typer
 from joblib import load
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy import case as sql_case
 from sqlalchemy.dialects.postgresql import insert
 
@@ -56,6 +56,7 @@ from app.main import safe_echo
 from app.models import (
     ContentItem,
     LinkSnapshot,
+    MediaAsset,
     ModelVersion,
     PipelineEntry,
     PostClassification,
@@ -720,6 +721,27 @@ def append_jsonl(path: Path, row: dict[str, Any]) -> None:
 async def select_full_cycle_candidate(session, settings) -> PipelineEntry | None:
     await ensure_missing_pipeline_entries(session, folder_name=settings.folder_name, limit=250)
     await session.commit()
+    direct_image_exists = (
+        select(MediaAsset.id)
+        .where(
+            MediaAsset.source_post_id == PipelineEntry.source_post_id,
+            MediaAsset.download_status == "done",
+            MediaAsset.mime_type.ilike("image/%"),
+        )
+        .exists()
+    )
+    link_image_exists = (
+        select(MediaAsset.id)
+        .join(LinkSnapshot, LinkSnapshot.image_asset_id == MediaAsset.id)
+        .join(PostLink, PostLink.id == LinkSnapshot.link_id)
+        .where(
+            PostLink.post_id == PipelineEntry.source_post_id,
+            MediaAsset.download_status == "done",
+            MediaAsset.mime_type.ilike("image/%"),
+        )
+        .exists()
+    )
+    image_exists = or_(direct_image_exists, link_image_exists)
     return (
         await session.execute(
             select(PipelineEntry)
@@ -737,6 +759,7 @@ async def select_full_cycle_candidate(session, settings) -> PipelineEntry | None
             )
             .order_by(
                 sql_case((PipelineEntry.is_eligible.is_(True), 0), (PipelineEntry.classification_id.is_(None), 2), else_=1),
+                sql_case((image_exists, 0), else_=1),
                 PipelineEntry.last_operation_at.desc(),
                 PipelineEntry.id.desc(),
             )
