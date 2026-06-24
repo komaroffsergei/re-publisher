@@ -936,6 +936,18 @@ async def run_full_cycle_once(*, model_context: ModelContext | None = None) -> d
         events.append(rewrite_event)
         if rewrite_event["status"] == "failed":
             return {"processed": 1, "entry_id": entry_id, "post_id": post_id, "status": "rewrite_failed", "events": events}
+        rewrite_result = rewrite_event.get("result") if isinstance(rewrite_event.get("result"), dict) else {}
+        if not int(rewrite_result.get("rewritten") or 0) and rewrite_result.get("skipped") != "draft_already_ready":
+            async with factory() as session:
+                refreshed = await sync_pipeline_entry_stage(session, post_id)
+                await session.commit()
+            return {
+                "processed": 1,
+                "entry_id": entry_id,
+                "post_id": post_id,
+                "status": refreshed.status if refreshed else "rewrite_blocked",
+                "events": events,
+            }
 
         publish_event = await run_tracked_post_stage(
             settings,
