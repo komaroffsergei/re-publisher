@@ -75,7 +75,6 @@ FULL_CYCLE_TERMINAL_SKIP_STATUSES = {
     "published",
     "blocked",
     "ineligible",
-    "link_summary_pending",
     "link_summary_failed",
     "rewrite_failed",
     "needs_review",
