@@ -59,6 +59,7 @@ from app.models import (
     MediaAsset,
     ModelVersion,
     PipelineEntry,
+    PostLink,
     PostClassification,
     PostProcessed,
     PublicationDraft,
