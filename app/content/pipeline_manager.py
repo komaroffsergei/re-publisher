@@ -10,6 +10,7 @@ from typing import Any
 import typer
 from joblib import load
 from sqlalchemy import func, select, update
+from sqlalchemy import case as sql_case
 from sqlalchemy.dialects.postgresql import insert
 
 from app.content.classifier import build_classification_text, predict
@@ -734,7 +735,11 @@ async def select_full_cycle_candidate(session, settings) -> PipelineEntry | None
                 PipelineEntry.status.notin_(FULL_CYCLE_TERMINAL_SKIP_STATUSES),
                 PublishedPost.id.is_(None),
             )
-            .order_by(PipelineEntry.last_operation_at.desc(), PipelineEntry.id.desc())
+            .order_by(
+                sql_case((PipelineEntry.is_eligible.is_(True), 0), (PipelineEntry.classification_id.is_(None), 2), else_=1),
+                PipelineEntry.last_operation_at.desc(),
+                PipelineEntry.id.desc(),
+            )
             .limit(1)
         )
     ).scalar_one_or_none()
