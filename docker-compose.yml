@@ -31,6 +31,7 @@ services:
       ARTIFACTS_DIR: /app/artifacts
       REPORTS_DIR: /app/reports
       CLASSIFIER_ACTIVE_MODEL_PATH: /app/models/active/tfidf_logreg.joblib
+      COLLECTOR_PROCESS_SAVED_POSTS: "false"
     command: ["python", "-m", "app.main", "run", "--folder", "MAX"]
     volumes:
       - ./sessions:/app/sessions

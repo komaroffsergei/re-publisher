@@ -382,6 +382,8 @@ async def run_service(settings: Settings, folder_name: str | None = None) -> Non
         return task
 
     def enqueue_post_processing(post_id: int | None) -> None:
+        if not settings.collector_process_saved_posts:
+            return
         if post_id is None or post_id in queued_posts:
             return
         queued_posts.add(post_id)
@@ -517,14 +519,15 @@ async def run_service(settings: Settings, folder_name: str | None = None) -> Non
             await mark_messages_deleted(session, resolved_peer_id, list(event.deleted_ids))
 
     refresh_task = asyncio.create_task(refresh_loop())
-    queue_task = track_task(asyncio.create_task(process_queue_loop()))
+    queue_task = track_task(asyncio.create_task(process_queue_loop())) if settings.collector_process_saved_posts else None
     track_task(asyncio.create_task(backfill_chats(list(current_chats.values()), "startup")))
     try:
         logger.info("service_started", extra={"extra": {"folder": folder, "chat_count": len(current_chats)}})
         await client.run_until_disconnected()
     finally:
         refresh_task.cancel()
-        queue_task.cancel()
+        if queue_task is not None:
+            queue_task.cancel()
         for task in list(background_tasks):
             task.cancel()
         await asyncio.gather(refresh_task, *background_tasks, return_exceptions=True)
