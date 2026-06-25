@@ -154,7 +154,7 @@ def append_link_materials_section(body: str, materials: list[LinkMaterial], *, m
             "\n".join(
                 [
                     f"> **{index}. {title}**",
-                    f"> Перевод и summary: {summary}",
+                    f"> Что в статье: {summary}",
                     f"> Источник материала: [ссылка]({url})",
                 ]
             )

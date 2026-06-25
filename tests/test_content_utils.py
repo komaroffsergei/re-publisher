@@ -157,7 +157,7 @@ def test_link_summary_context_and_draft_section_include_article_urls():
     assert "huggingface" not in context
     assert "**Материалы по ссылкам:**" in body
     assert "> **1. Article title**" in body
-    assert "> Перевод и summary: Article summary" in body
+    assert "> Что в статье: Article summary" in body
     assert "> Источник материала: [ссылка](https://example.com/final)" in body
 
 
@@ -166,7 +166,7 @@ def test_link_materials_section_is_kept_in_publish_text():
         "Черновик\n\n"
         "**Материалы по ссылкам:**\n"
         "> **1. Article title**\n"
-        "> Перевод и summary: Article summary\n"
+        "> Что в статье: Article summary\n"
         "> Источник материала: [ссылка](https://example.com/final)\n\n"
         "Источник: [оригинальный пост](https://t.me/c/1/2)"
     )
