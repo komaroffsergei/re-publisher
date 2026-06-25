@@ -13,6 +13,8 @@ from app.models import LinkSnapshot, MediaAsset, PostLink
 ARTICLE_LIKE_URL_TYPES = {"article", "arxiv", "telegram"}
 LINK_SUMMARY_PENDING_STATUS = "link_summary_pending"
 LINK_SUMMARY_FAILED_STATUS = "link_summary_failed"
+LINK_MATERIALS_SECTION_HEADING = "Материалы по ссылкам:"
+SOURCE_LINE_PATTERN = re.compile(r"^\s*Источник:\s+.+$", re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -147,8 +149,26 @@ def append_link_materials_section(body: str, materials: list[LinkMaterial], *, m
         rows.append(f"{index}. {link_title(material)}\n{summary}\n{link_display_url(material)}")
     if not rows:
         return clean_text(body)
-    section = "Материалы по ссылкам:\n" + "\n\n".join(rows)
+    section = f"{LINK_MATERIALS_SECTION_HEADING}\n" + "\n\n".join(rows)
     return clean_text(f"{body}\n\n{section}")
+
+
+def strip_link_materials_section(body: str | None) -> str:
+    text = clean_text(body)
+    if not text:
+        return ""
+    marker_pattern = re.compile(rf"^\s*{re.escape(LINK_MATERIALS_SECTION_HEADING)}\s*$", re.MULTILINE)
+    match = marker_pattern.search(text)
+    if not match:
+        return text
+    prefix = clean_text(text[: match.start()])
+    tail = text[match.end() :]
+    source_match = SOURCE_LINE_PATTERN.search(tail)
+    if source_match:
+        source_line = clean_text(source_match.group(0))
+        if source_line and source_line not in prefix:
+            return clean_text(f"{prefix}\n\n{source_line}" if prefix else source_line)
+    return prefix
 
 
 def clip_for_material(text: str | None, max_chars: int) -> str:

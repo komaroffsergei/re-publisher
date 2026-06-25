@@ -14,7 +14,6 @@ from sqlalchemy.dialects.postgresql import insert
 from app.content.common import run_async, session_factory, settings_or_exit
 from app.content.link_materials import (
     LINK_SUMMARY_PENDING_STATUS,
-    append_link_materials_section,
     build_enriched_numbered_digest_body,
     format_link_summary_context,
     is_article_like_link,
@@ -442,7 +441,7 @@ async def rewrite_entry(
             draft_body, restored_inline_links = restore_missing_markdown_links(draft["body"], source_link_segments)
             if restored_inline_links:
                 events.append(f"restored inline links: {len(restored_inline_links)}")
-            draft["body"] = append_link_materials_section(draft_body, link_materials)
+            draft["body"] = draft_body
         draft["body"] = append_source_post_link(draft["body"], source_post_url)
         if source_post_url:
             events.append("source post link appended")

@@ -17,10 +17,12 @@ from app.content.link_materials import (
     link_summary_gate,
     markdown_link_segments,
     restore_missing_markdown_links,
+    strip_link_materials_section,
     telegram_link_segments,
     telegram_text_with_markdown_links,
 )
 from app.content.model_promoter import promotion_decision
+from app.content.max_publisher import compose_max_text
 from app.content.pipeline_rewriter import append_source_post_link, should_block_link_summary_gate, telegram_post_source_url
 from app.content.prompt_versions import LINK_SUMMARY_PROMPT, PIPELINE_REWRITE_PROMPT, default_prompt_values, prompt_config_from_values
 from app.content.rewriter import draft_from_template
@@ -155,6 +157,22 @@ def test_link_summary_context_and_draft_section_include_article_urls():
     assert "huggingface" not in context
     assert "Материалы по ссылкам:" in body
     assert "https://example.com/final" in body
+
+
+def test_link_materials_section_is_stripped_from_publish_text():
+    body = (
+        "Черновик\n\n"
+        "Материалы по ссылкам:\n1. Article title\nArticle summary\nhttps://example.com/final\n\n"
+        "Источник: [оригинальный пост](https://t.me/c/1/2)"
+    )
+    draft = SimpleNamespace(title="Title", body=body)
+
+    publish_text = compose_max_text(draft)
+
+    assert strip_link_materials_section(body) == "Черновик\n\nИсточник: [оригинальный пост](https://t.me/c/1/2)"
+    assert "Материалы по ссылкам" not in publish_text
+    assert "Article summary" not in publish_text
+    assert publish_text == "**Title**\n\nЧерновик\n\nИсточник: [оригинальный пост](https://t.me/c/1/2)"
 
 
 def test_telegram_link_segments_use_utf16_offsets_for_emoji():

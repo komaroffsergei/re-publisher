@@ -72,7 +72,7 @@
       {% if draft_segments %}
         <div class="linked-text draft-text">{% for segment in draft_segments %}{% if segment.url %}<a href="{{ segment.url }}" target="_blank" rel="noopener noreferrer">{{ segment.text }}</a>{% else %}{{ segment.text }}{% endif %}{% endfor %}</div>
       {% else %}
-        <pre>{{ draft.body }}</pre>
+        <pre>{{ draft_display_body }}</pre>
       {% endif %}
       <dl>
         <dt>Статус</dt><dd>{{ draft.status }}</dd>
@@ -136,36 +136,54 @@
 
 <article>
   <h2>Материалы по ссылкам</h2>
-  {% set materials = namespace(has=false) %}
+  {% set materials = namespace(total=0, ready=0, pending=0, failed=0) %}
   {% for link in link_rows %}
     {% if link.is_article_like %}
-      {% set materials.has = true %}
-      <section class="link-material">
-        <div class="item-head">
-          <div>
-            <h3><a href="{{ link.url or link.original_url }}" target="_blank" rel="noopener noreferrer">{{ link.title or link.url or link.original_url }}</a></h3>
-            <p class="muted">{{ link.url or link.original_url }}</p>
-          </div>
-          <div class="link-meta">
-            <span class="pill">{{ link.extraction_status or "pending" }}</span>
-            {% if link.summary_model %}<span class="pill">{{ link.summary_model }}</span>{% endif %}
-          </div>
-        </div>
-        {% if link.error %}<p class="error">{{ link.error }}</p>{% endif %}
-        <div class="link-material-grid">
-          <div>
-            <h4>Оригинал</h4>
-            <pre class="text-box">{{ link.extracted_text or "нет" }}</pre>
-          </div>
-          <div>
-            <h4>Summary</h4>
-            <pre class="text-box">{{ link.summary or "нет" }}</pre>
-          </div>
-        </div>
-      </section>
+      {% set materials.total = materials.total + 1 %}
+      {% if link.error or (link.extraction_status or "") == "failed" %}
+        {% set materials.failed = materials.failed + 1 %}
+      {% elif link.summary %}
+        {% set materials.ready = materials.ready + 1 %}
+      {% else %}
+        {% set materials.pending = materials.pending + 1 %}
+      {% endif %}
     {% endif %}
   {% endfor %}
-  {% if not materials.has %}
+  {% if materials.total %}
+    <details class="link-materials-panel" open>
+      <summary>
+        <span>Материалы по ссылкам</span>
+        <span class="muted">{{ materials.ready }}/{{ materials.total }} summary готовы{% if materials.pending %} · {{ materials.pending }} ждут{% endif %}{% if materials.failed %} · {{ materials.failed }} ошибок{% endif %}</span>
+      </summary>
+      <div class="link-materials-stack">
+        {% for link in link_rows %}
+          {% if link.is_article_like %}
+            <details class="link-material-card" {% if link.summary %}open{% endif %}>
+              <summary>
+                <span class="link-material-title">{{ link.title or link.url or link.original_url }}</span>
+                <span class="link-meta">
+                  <span class="pill">{{ link.extraction_status or "pending" }}</span>
+                  {% if link.summary_model %}<span class="pill">{{ link.summary_model }}</span>{% endif %}
+                </span>
+              </summary>
+              <div class="link-material-body">
+                <p class="link-material-url"><a href="{{ link.url or link.original_url }}" target="_blank" rel="noopener noreferrer">{{ link.url or link.original_url }}</a></p>
+                {% if link.error %}<p class="error">{{ link.error }}</p>{% endif %}
+                <section class="summary-box">
+                  <h4>Summary</h4>
+                  <div class="link-material-summary-text">{{ link.summary or "нет" }}</div>
+                </section>
+                <details class="raw-source">
+                  <summary>Оригинальный текст</summary>
+                  <pre class="text-box raw-source-text">{{ link.extracted_text or "нет" }}</pre>
+                </details>
+              </div>
+            </details>
+          {% endif %}
+        {% endfor %}
+      </div>
+    </details>
+  {% else %}
     <p class="muted">Article-like материалов нет.</p>
   {% endif %}
 </article>

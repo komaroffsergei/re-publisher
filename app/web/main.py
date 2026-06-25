@@ -27,6 +27,7 @@ from app.content.link_materials import (
     load_link_materials,
     load_media_assets_for_post,
     markdown_link_segments,
+    strip_link_materials_section,
     telegram_link_segments,
 )
 from app.content.local_summary import summarize_post_links
@@ -1600,7 +1601,8 @@ def register_routes(app: FastAPI) -> None:
                 ).all()
             )
             _entry, _item, _post, _chat, _classification, draft, _published = row
-            draft_segments = markdown_link_segments(draft.body if draft else None)
+            draft_display_body = strip_link_materials_section(draft.body if draft else None)
+            draft_segments = markdown_link_segments(draft_display_body)
             rewrite_status = rewrite_status_payload(_entry, draft, attempts)
             source_post_url = telegram_post_source_url(post, row[3])
         return templates.TemplateResponse(
@@ -1611,6 +1613,7 @@ def register_routes(app: FastAPI) -> None:
                 "attempts": attempts,
                 "post_segments": post_segments,
                 "draft_segments": draft_segments,
+                "draft_display_body": draft_display_body,
                 "link_rows": link_rows,
                 "media_assets": media_assets,
                 "rewrite_status": rewrite_status,
