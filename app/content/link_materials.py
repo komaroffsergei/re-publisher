@@ -140,16 +140,28 @@ def format_link_summary_context(materials: list[LinkMaterial], *, max_summary_ch
     return clean_text("\n\n".join(lines))
 
 
-def append_link_materials_section(body: str, materials: list[LinkMaterial], *, max_summary_chars: int = 700) -> str:
+def append_link_materials_section(body: str, materials: list[LinkMaterial], *, max_summary_chars: int = 650, max_items: int = 4) -> str:
     rows: list[str] = []
     for index, material in enumerate(summarized_article_materials(materials), start=1):
+        if len(rows) >= max_items:
+            break
         summary = clip_for_material(material.snapshot.summary_short if material.snapshot else None, max_summary_chars)
         if not summary:
             continue
-        rows.append(f"{index}. {link_title(material)}\n{summary}\n{link_display_url(material)}")
+        title = link_title(material)
+        url = link_display_url(material)
+        rows.append(
+            "\n".join(
+                [
+                    f"> **{index}. {title}**",
+                    f"> Перевод и summary: {summary}",
+                    f"> Источник материала: [ссылка]({url})",
+                ]
+            )
+        )
     if not rows:
         return clean_text(body)
-    section = f"{LINK_MATERIALS_SECTION_HEADING}\n" + "\n\n".join(rows)
+    section = f"**{LINK_MATERIALS_SECTION_HEADING}**\n" + "\n\n".join(rows)
     return clean_text(f"{body}\n\n{section}")
 
 
@@ -157,7 +169,7 @@ def strip_link_materials_section(body: str | None) -> str:
     text = clean_text(body)
     if not text:
         return ""
-    marker_pattern = re.compile(rf"^\s*{re.escape(LINK_MATERIALS_SECTION_HEADING)}\s*$", re.MULTILINE)
+    marker_pattern = re.compile(rf"^\s*(?:\*\*)?{re.escape(LINK_MATERIALS_SECTION_HEADING)}(?:\*\*)?\s*$", re.MULTILINE)
     match = marker_pattern.search(text)
     if not match:
         return text

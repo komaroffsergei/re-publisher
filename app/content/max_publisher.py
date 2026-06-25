@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.content.common import limit_option, run_async, session_factory, settings_or_exit
-from app.content.link_materials import link_summary_gate, load_link_materials, strip_link_materials_section
+from app.content.link_materials import link_summary_gate, load_link_materials
 from app.content.pipeline_activity import try_acquire_pipeline_work_lock
 from app.content.pipeline_entries import PIPELINE_STAGE_PUBLISHED, PIPELINE_STAGE_READY, sync_pipeline_entry_stage
 from app.content.pipeline_logic import READY_DRAFT_STATUS
@@ -122,7 +122,7 @@ def trim_max_text(text: str, limit: int = MAX_TEXT_LIMIT) -> str:
 
 def compose_max_text(draft: PublicationDraft) -> str:
     title = clean_text(draft.title)
-    body = strip_link_materials_section(draft.body)
+    body = clean_text(draft.body)
     text = f"**{title}**\n\n{body}" if title else body
     return trim_max_text(text, MAX_TEXT_LIMIT)
 

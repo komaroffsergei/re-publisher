@@ -155,24 +155,31 @@ def test_link_summary_context_and_draft_section_include_article_urls():
     assert "1. Article title" in context
     assert "Article summary" in context
     assert "huggingface" not in context
-    assert "Материалы по ссылкам:" in body
-    assert "https://example.com/final" in body
+    assert "**Материалы по ссылкам:**" in body
+    assert "> **1. Article title**" in body
+    assert "> Перевод и summary: Article summary" in body
+    assert "> Источник материала: [ссылка](https://example.com/final)" in body
 
 
-def test_link_materials_section_is_stripped_from_publish_text():
+def test_link_materials_section_is_kept_in_publish_text():
     body = (
         "Черновик\n\n"
-        "Материалы по ссылкам:\n1. Article title\nArticle summary\nhttps://example.com/final\n\n"
+        "**Материалы по ссылкам:**\n"
+        "> **1. Article title**\n"
+        "> Перевод и summary: Article summary\n"
+        "> Источник материала: [ссылка](https://example.com/final)\n\n"
         "Источник: [оригинальный пост](https://t.me/c/1/2)"
     )
     draft = SimpleNamespace(title="Title", body=body)
 
     publish_text = compose_max_text(draft)
 
+    assert "Материалы по ссылкам" in publish_text
+    assert "Article summary" in publish_text
+    assert "> Источник материала: [ссылка](https://example.com/final)" in publish_text
+    assert publish_text.endswith("Источник: [оригинальный пост](https://t.me/c/1/2)")
+
     assert strip_link_materials_section(body) == "Черновик\n\nИсточник: [оригинальный пост](https://t.me/c/1/2)"
-    assert "Материалы по ссылкам" not in publish_text
-    assert "Article summary" not in publish_text
-    assert publish_text == "**Title**\n\nЧерновик\n\nИсточник: [оригинальный пост](https://t.me/c/1/2)"
 
 
 def test_telegram_link_segments_use_utf16_offsets_for_emoji():
