@@ -12,6 +12,7 @@ from app.content.pipeline_logic import (
     status_from_state,
 )
 from app.content.max_publisher import MAX_TEXT_LIMIT, MaxPublisherError, compose_max_text, max_text_size
+from app.content.max_publisher import extract_upload_token
 from app.content.pipeline_entries import (
     INCOMPLETE_ENTRY_STATUSES,
     PIPELINE_STAGE_ENRICHED,
@@ -164,6 +165,8 @@ def test_pipeline_stage_tracks_lifecycle_order():
 def test_link_summary_statuses_are_incomplete_terminal_states():
     assert LINK_SUMMARY_PENDING_STATUS in INCOMPLETE_ENTRY_STATUSES
     assert LINK_SUMMARY_FAILED_STATUS in INCOMPLETE_ENTRY_STATUSES
+    assert "publish_failed_media" in INCOMPLETE_ENTRY_STATUSES
+    assert "publish_context_missing" in INCOMPLETE_ENTRY_STATUSES
     assert (
         pipeline_stage_for_state(
             has_classification=True,
@@ -175,6 +178,26 @@ def test_link_summary_statuses_are_incomplete_terminal_states():
             is_failed_or_incomplete=True,
         )
         == PIPELINE_STAGE_RECEIVED
+    )
+
+
+def test_max_upload_token_parser_handles_current_max_shapes():
+    assert (
+        extract_upload_token({"token": "_3Rarhcf1PtlMXy8jpgie8Ai_KARnVFYNQTtmIRWNh4"})
+        == "_3Rarhcf1PtlMXy8jpgie8Ai_KARnVFYNQTtmIRWNh4"
+    )
+    assert (
+        extract_upload_token(
+            {"retval": {"uploadToken": "_nested_token_1234567890abcdef"}},
+        )
+        == "_nested_token_1234567890abcdef"
+    )
+    assert (
+        extract_upload_token(
+            {},
+            "https://iu.oneme.ru/upload.do?sig=abc&attachment_token=_url_token_1234567890abcdef",
+        )
+        == "_url_token_1234567890abcdef"
     )
 
 

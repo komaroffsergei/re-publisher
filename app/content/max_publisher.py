@@ -155,26 +155,57 @@ def media_publish_blocker(media: MediaAsset | None) -> str | None:
     return None
 
 
-def extract_upload_token(payload: Any, upload_url: str | None = None) -> str | None:
+TOKEN_FIELD_HINTS = ("token", "attachment", "file_token", "filetoken", "media_token", "upload_token")
+
+
+def looks_like_upload_token(value: Any) -> bool:
+    text = clean_text(value)
+    if len(text) < 16 or len(text) > 512:
+        return False
+    if "/" in text or "://" in text or " " in text:
+        return False
+    return True
+
+
+def extract_upload_token(payload: Any, upload_url: str | None = None, *, parent_key: str = "") -> str | None:
+    key_hint = parent_key.lower()
     if isinstance(payload, dict):
-        token = payload.get("token")
-        if token:
-            return clean_text(token)
-        for value in payload.values():
-            token = extract_upload_token(value)
+        for key, value in payload.items():
+            key_text = clean_text(key).lower()
+            if any(hint in key_text for hint in TOKEN_FIELD_HINTS) and not isinstance(value, (dict, list)):
+                token = clean_text(value)
+                if token:
+                    return token
+            token = extract_upload_token(value, parent_key=key_text)
             if token:
                 return token
     elif isinstance(payload, list):
         for value in payload:
-            token = extract_upload_token(value)
+            token = extract_upload_token(value, parent_key=parent_key)
             if token:
                 return token
+    elif any(hint in key_hint for hint in TOKEN_FIELD_HINTS) and looks_like_upload_token(payload):
+        return clean_text(payload)
     if upload_url:
         query = parse_qs(urlparse(upload_url).query)
-        for key in ("token", "attachment", "file_token"):
-            if query.get(key):
-                return clean_text(query[key][0])
+        for key, values in query.items():
+            key_text = clean_text(key).lower()
+            if values and any(hint in key_text for hint in TOKEN_FIELD_HINTS):
+                return clean_text(values[0])
     return None
+
+
+def upload_token_debug(upload_meta: Any, upload_payload: Any, upload_url: str) -> str:
+    def keys(value: Any) -> list[str]:
+        return sorted(str(key) for key in value.keys()) if isinstance(value, dict) else [type(value).__name__]
+
+    query_keys = sorted(parse_qs(urlparse(upload_url).query).keys())
+    return (
+        f"MAX media upload token missing: "
+        f"upload_meta_keys={keys(upload_meta)} "
+        f"upload_payload_keys={keys(upload_payload)} "
+        f"upload_url_query_keys={query_keys}"
+    )[:800]
 
 
 def message_payload(data: dict[str, Any]) -> dict[str, Any]:
@@ -242,7 +273,7 @@ async def upload_max_image(settings: Settings, media: MediaAsset) -> dict[str, s
         raise MaxPublisherError(f"MAX media upload failed: {exc}") from exc
     uploaded_token = extract_upload_token(upload_payload, upload_url) or extract_upload_token(upload_meta, upload_url)
     if not uploaded_token:
-        raise MaxPublisherError("MAX media upload token missing")
+        raise MaxPublisherError(upload_token_debug(upload_meta, upload_payload, upload_url))
     return {"token": uploaded_token}
 
 

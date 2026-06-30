@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import case, func, or_, select, update
+from sqlalchemy import case, func, or_, select, text, update
 
 from app.config import Settings, get_settings
 from app.content.link_enricher import enrich_post_links
@@ -50,6 +50,7 @@ from app.content.prompt_versions import (
     create_prompt_version,
     ensure_active_prompt_version,
 )
+from app.content.topic_audit import latest_topic_audit_summary, report_root
 from app.content.yandex_genre_classifier import usage_total_tokens
 from app.content.search import build_search_statement
 from app.content.url_extractor import extract_post_links
@@ -1001,6 +1002,21 @@ async def reset_link_summary_queue(session) -> dict[str, Any]:
 def register_routes(app: FastAPI) -> None:
     auth = Depends(require_auth)
 
+    @app.get("/health")
+    async def health(request: Request):
+        started = datetime.now(ZoneInfo("UTC"))
+        checks: dict[str, Any] = {"web": "ok"}
+        try:
+            async with session_factory(request)() as session:
+                await session.execute(text("select 1"))
+            checks["db"] = "ok"
+        except Exception as exc:
+            checks["db"] = "failed"
+            checks["error"] = str(exc)[:300]
+            raise HTTPException(status_code=503, detail=checks) from exc
+        checks["checked_at"] = started.isoformat()
+        return checks
+
     @app.get("/", response_class=HTMLResponse, dependencies=[auth])
     async def index() -> RedirectResponse:
         return RedirectResponse("/processed")
@@ -1231,6 +1247,22 @@ def register_routes(app: FastAPI) -> None:
                 "prev_page": max(1, page - 1),
                 "next_page": min(total_pages, page + 1),
                 "series_history": series_history,
+            },
+        )
+
+    @app.get("/topic-audit", response_class=HTMLResponse, dependencies=[auth])
+    async def topic_audit_page(request: Request) -> HTMLResponse:
+        settings: Settings = request.app.state.settings
+        summary = latest_topic_audit_summary(report_root(settings))
+        return templates.TemplateResponse(
+            request,
+            "topic_audit.html",
+            {
+                "summary": summary,
+                "topics": summary.get("topics", []) if summary else [],
+                "totals": summary.get("totals", {}) if summary else {},
+                "breakdowns": summary.get("breakdowns", {}) if summary else {},
+                "artifacts": summary.get("artifacts", {}) if summary else {},
             },
         )
 
@@ -1941,6 +1973,14 @@ def register_routes(app: FastAPI) -> None:
             total_drafts = (await session.execute(select(func.count()).select_from(PublicationDraft))).scalar_one()
             total_published = (await session.execute(select(func.count()).select_from(PublishedPost))).scalar_one()
             return {"telegram_posts": total_posts, "content_items": total_items, "drafts": total_drafts, "published": total_published}
+
+    @app.get("/api/topic-audit/latest", dependencies=[auth])
+    async def api_topic_audit_latest(request: Request):
+        settings: Settings = request.app.state.settings
+        summary = latest_topic_audit_summary(report_root(settings))
+        if summary is None:
+            return {"ok": False, "error": "topic audit report not found"}
+        return {"ok": True, "summary": summary}
 
     @app.post("/api/pipeline/retry/{post_id}", dependencies=[auth])
     async def api_pipeline_retry(request: Request, post_id: int):

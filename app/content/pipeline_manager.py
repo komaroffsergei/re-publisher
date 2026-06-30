@@ -81,6 +81,7 @@ FULL_CYCLE_TERMINAL_SKIP_STATUSES = {
     "link_summary_failed",
     "rewrite_failed",
     "needs_review",
+    "publish_context_missing",
     MISSING_MEDIA_STATUS,
     PUBLISH_FAILED_STATUS,
     "publish_failed_media",

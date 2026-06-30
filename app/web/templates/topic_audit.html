@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="toolbar">
+  <div>
+    <h1>Аудит тем</h1>
+    <p class="muted">Статистика по неопубликованным MAX-постам и кандидаты для отдельных AI-каналов.</p>
+  </div>
+  <div class="status">
+    {% if summary %}
+      обновлено: {{ summary.generated_at }}
+    {% else %}
+      отчет еще не создан
+    {% endif %}
+  </div>
+</section>
+
+{% if not summary %}
+  <article>
+    <h2>Нет отчета</h2>
+    <p class="muted">Запусти read-only аудит на сервере или локально:</p>
+    <pre><code>python -m app.content.topic_audit audit-unpublished --sample-per-topic 30</code></pre>
+  </article>
+{% else %}
+  <section class="metric-row topic-audit-metrics">
+    <div class="metric"><strong>{{ totals.unpublished or 0 }}</strong><span>неопубликованных</span></div>
+    <div class="metric"><strong>{{ totals.with_content_item or 0 }}</strong><span>с материалом</span></div>
+    <div class="metric"><strong>{{ totals.eligible or 0 }}</strong><span>подходят</span></div>
+    <div class="metric"><strong>{{ totals.with_image or 0 }}</strong><span>с изображением</span></div>
+    <div class="metric"><strong>{{ totals.publishable_basics or 0 }}</strong><span>публикуемые</span></div>
+    <div class="metric"><strong>{{ totals.article_links or 0 }}</strong><span>article-ссылок</span></div>
+    <div class="metric"><strong>{{ totals.article_summaries or 0 }}</strong><span>summary ссылок</span></div>
+  </section>
+
+  <article>
+    <h2>Артефакты</h2>
+    <div class="artifact-grid">
+      <div><span class="status">summary</span><code>{{ artifacts.summary_md or artifacts.summary_json }}</code></div>
+      <div><span class="status">topics</span><code>{{ artifacts.topics_csv }}</code></div>
+      <div><span class="status">samples</span><code>{{ artifacts.samples_jsonl }}</code></div>
+      <div><span class="status">training</span><code>{{ artifacts.training_plan_md }}</code></div>
+    </div>
+  </article>
+
+  <section class="topic-grid">
+    {% for topic in topics %}
+      <article class="topic-card topic-card-{{ topic.recommendation }}">
+        <div class="topic-card-head">
+          <div>
+            <h2>{{ topic.title }}</h2>
+            <div class="status">{{ topic.slug }} · {{ topic.mode }}</div>
+          </div>
+          <span class="pill {% if topic.recommendation == 'open_now' %}ok{% elif topic.recommendation in ['do_not_open_yet', 'manual_only'] %}danger{% endif %}">
+            {{ topic.recommendation }}
+          </span>
+        </div>
+        <p>{{ topic.description }}</p>
+        <p class="muted">{{ topic.channel_idea }}</p>
+        <div class="topic-stats">
+          <div><strong>{{ topic.count }}</strong><span>всего</span></div>
+          <div><strong>{{ topic.publishable_count }}</strong><span>публикуемые</span></div>
+          <div><strong>{{ topic.with_image_count }}</strong><span>с image</span></div>
+          <div><strong>{{ topic.training_target }}</strong><span>разметить</span></div>
+        </div>
+        <div class="axis-row compact">
+          <span class="pill">сложн. {{ topic.avg_difficulty }}</span>
+          <span class="pill">реклама {{ topic.avg_promo }}</span>
+          <span class="pill">мнение {{ topic.avg_opinion }}</span>
+          <span class="pill">событие {{ topic.avg_event }}</span>
+        </div>
+        {% if topic.top_terms %}
+          <h3>Термины</h3>
+          <p class="topic-tags">
+            {% for term in topic.top_terms[:10] %}
+              <span class="pill">{{ term.term }} {{ term.count }}</span>
+            {% endfor %}
+          </p>
+        {% endif %}
+        {% if topic.top_chats %}
+          <h3>Основные источники</h3>
+          <ul class="compact-list">
+            {% for chat in topic.top_chats[:5] %}
+              <li>{{ chat.chat }} <span class="status">{{ chat.count }}</span></li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+        {% if topic.samples %}
+          <details class="topic-samples">
+            <summary>Примеры · {{ topic.samples|length }}</summary>
+            <div class="topic-sample-list">
+              {% for sample in topic.samples[:8] %}
+                <a href="/pipeline/{{ sample.entry_id }}" class="topic-sample">
+                  <strong>#{{ sample.entry_id }} · {{ sample.title }}</strong>
+                  <span>{{ sample.preview }}</span>
+                  <small>{{ sample.chat }} · {{ sample.genre_primary }} · links {{ sample.article_summaries }}/{{ sample.article_links_total }}</small>
+                </a>
+              {% endfor %}
+            </div>
+          </details>
+        {% endif %}
+      </article>
+    {% endfor %}
+  </section>
+
+  <section class="grid2">
+    <article>
+      <h2>Жанры</h2>
+      <table>
+        <thead><tr><th>Жанр</th><th>Количество</th></tr></thead>
+        <tbody>
+          {% for genre, count in breakdowns.genre.items() %}
+            <tr><td><code>{{ genre }}</code></td><td>{{ count }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </article>
+    <article>
+      <h2>Статусы</h2>
+      <table>
+        <thead><tr><th>Статус</th><th>Количество</th></tr></thead>
+        <tbody>
+          {% for status, count in breakdowns.status.items() %}
+            <tr><td><code>{{ status }}</code></td><td>{{ count }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </article>
+  </section>
+{% endif %}
+{% endblock %}

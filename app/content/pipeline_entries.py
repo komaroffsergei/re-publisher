@@ -56,6 +56,7 @@ INCOMPLETE_ENTRY_STATUSES = {
     LINK_SUMMARY_PENDING_STATUS,
     LINK_SUMMARY_FAILED_STATUS,
     "published_incomplete",
+    "publish_context_missing",
     "publish_failed",
     "publish_failed_media",
     "publish_failed_media_verification",
@@ -311,6 +312,8 @@ async def sync_pipeline_entry_stage(session: AsyncSession, post_id: int) -> Pipe
         status = "published_incomplete"
     elif readiness.ok and published is not None:
         status = "published"
+    elif entry.status in INCOMPLETE_ENTRY_STATUSES and published is None:
+        status = entry.status
     elif readiness.ok:
         status = READY_DRAFT_STATUS
     elif classification is None:
@@ -319,8 +322,6 @@ async def sync_pipeline_entry_stage(session: AsyncSession, post_id: int) -> Pipe
         status = "ineligible"
     elif link_summary_status:
         status = link_summary_status
-    elif entry.status in INCOMPLETE_ENTRY_STATUSES and published is None:
-        status = entry.status
     elif draft is not None and draft.status == READY_DRAFT_STATUS:
         status = "not_ready"
     elif draft is not None:

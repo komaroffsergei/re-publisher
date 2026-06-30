@@ -14,7 +14,7 @@ def test_config_loads_from_environment(monkeypatch):
     assert settings.tg_api_hash == "hash"
     assert settings.folder_name == "MAX"
     assert settings.collect_comments is True
-    assert settings.download_media is False
+    assert settings.download_media is True
 
 
 def test_config_loads_yandex_settings(monkeypatch):
