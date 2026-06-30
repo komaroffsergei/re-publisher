@@ -38,6 +38,21 @@ jobs:
             'set -Eeuo pipefail
              mkdir -p /opt/re-publisher
              cd /opt/re-publisher
+             echo "Disk before cleanup:"
+             df -h /
+             if command -v docker >/dev/null 2>&1; then
+               docker system df || true
+               docker builder prune -af || true
+               docker image prune -af || true
+               docker container prune -f || true
+             fi
+             if [ -d /var/lib/docker/containers ]; then
+               find /var/lib/docker/containers -name "*-json.log" -type f -size +50M -exec truncate -s 0 {} \; || true
+             fi
+             git gc --prune=now || true
+             rm -rf .git/objects/pack/tmp_pack_* || true
+             echo "Disk after cleanup:"
+             df -h /
              if [ ! -d .git ]; then
                git init
                git remote add origin git@github.com:komaroffsergei/re-publisher.git
