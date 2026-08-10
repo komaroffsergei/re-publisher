@@ -1,5 +1,9 @@
 # Telegram Folder Collector Service
 
+## Кратко о проекте
+
+Сервис сбора сообщений из Telegram-папки через пользовательскую MTProto-сессию с сохранением в PostgreSQL. Структура: приложение и pipeline в `app/`, миграции в `alembic/`, контейнеры в `Dockerfile` и `docker-compose.yml`. Интересен инкрементальной синхронизацией, SSRF-safe обогащением ссылок, классификацией материалов и подготовкой публикационных черновиков.
+
 Collects Telegram messages from all chats, channels, and groups resolved from a user account's Telegram folder and stores them in PostgreSQL. The default folder is `MAX`.
 
 This service uses a user MTProto session through Telethon. It does not use the Bot API.
