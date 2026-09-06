@@ -1,0 +1,12 @@
+FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+WORKDIR /app
+COPY requirements.portfolio.lock ./
+RUN pip install -r requirements.portfolio.lock
+COPY pyproject.toml README.md ./
+COPY app ./app
+RUN pip install --no-deps . && pip freeze > /app/installed-requirements.txt
+RUN useradd --uid 10001 --create-home demo && chown -R demo:demo /app
+USER demo
+EXPOSE 8000
+CMD ["uvicorn","app.portfolio:app","--host","0.0.0.0","--port","8000"]
