@@ -1,0 +1,29 @@
+name: Full runtime image
+on:
+  push:
+    branches: [portfolio/20260907]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build original runtime
+        run: docker build -f Dockerfile.runtime -t portfolio-re-publisher:${{ github.sha }} .
+      - name: Export pinned image
+        run: |
+          docker image inspect portfolio-re-publisher:${{ github.sha }} --format '{{.Id}}' > image-id.txt
+          docker save portfolio-re-publisher:${{ github.sha }} | gzip -1 > runtime.tar.gz
+          sha256sum runtime.tar.gz > runtime.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtime-${{ github.sha }}
+          path: |
+            runtime.tar.gz
+            runtime.tar.gz.sha256
+            image-id.txt
+          compression-level: 0
+          retention-days: 7
