@@ -271,7 +271,11 @@ async def seed_portfolio_demo(*, remove: bool = False) -> dict[str, Any]:
         active_model = (
             await session.execute(
                 select(ModelVersion.id)
-                .where(ModelVersion.model_name == "tfidf_logreg", ModelVersion.status == "active")
+                .where(
+                    ModelVersion.model_name == "tfidf_logreg",
+                    ModelVersion.status == "active",
+                    ModelVersion.model_version != DEMO_MODEL_VERSION,
+                )
                 .limit(1)
             )
         ).scalar_one_or_none()

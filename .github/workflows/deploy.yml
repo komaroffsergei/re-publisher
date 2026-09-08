@@ -7,6 +7,8 @@ jobs:
   tests:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      DB_DSN: postgresql+asyncpg://portfolio:portfolio@127.0.0.1:5432/portfolio
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
