@@ -30,3 +30,12 @@ def test_portfolio_projection_uses_real_local_pipeline_functions():
         assert result["draft"]["title"] == material["title"]
         assert result["draft"]["body"]
         assert result["source_url"].startswith("https://portfolio-demo.invalid/")
+
+
+def test_portfolio_seed_has_no_separate_hidden_folder():
+    import inspect
+    from app.portfolio_seed import seed_portfolio_demo
+
+    source = inspect.getsource(seed_portfolio_demo)
+    assert '"folder_name": settings.folder_name' in source
+    assert "PORTFOLIO_DEMO" not in source

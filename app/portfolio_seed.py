@@ -35,7 +35,6 @@ from app.models import (
 from app.portfolio_pipeline import model
 
 DEMO_CHAT_ID = -9_000_000_000_001
-DEMO_FOLDER = "PORTFOLIO_DEMO"
 DEMO_SHOWCASE = "portfolio-demo"
 DEMO_MODEL_VERSION = "portfolio-demo-v1"
 
@@ -232,7 +231,7 @@ async def seed_portfolio_demo(*, remove: bool = False) -> dict[str, Any]:
             "title": "Portfolio Demo · редакционный поток",
             "username": "portfolio_demo",
             "chat_type": "channel",
-            "folder_name": DEMO_FOLDER,
+            "folder_name": settings.folder_name,
             "raw": {"portfolio_demo": True, "external_collection": False},
             "updated_at": now,
         }
