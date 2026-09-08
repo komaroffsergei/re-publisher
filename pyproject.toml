@@ -47,6 +47,9 @@ local-models = [
 where = ["."]
 include = ["app*"]
 
+[tool.setuptools.package-data]
+"app.web" = ["static/**/*", "templates/**/*"]
+
 [tool.pytest.ini_options]
 addopts = "-q"
 asyncio_mode = "auto"
