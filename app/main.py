@@ -239,5 +239,16 @@ def run(folder: str = typer.Option(None, "--folder", "-f")) -> None:
     run_async(_run())
 
 
+@app.command("seed-portfolio-demo")
+def seed_portfolio_demo_command(
+    remove: bool = typer.Option(False, "--remove", help="Remove only records created by this portfolio seed."),
+) -> None:
+    """Load or remove the deterministic portfolio corpus without external calls."""
+    from app.portfolio_seed import seed_portfolio_demo
+
+    result: dict[str, Any] = asyncio.run(seed_portfolio_demo(remove=remove))
+    safe_echo(result)
+
+
 if __name__ == "__main__":
     app()
