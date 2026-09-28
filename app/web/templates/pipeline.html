@@ -118,7 +118,7 @@
             {% set live_text = board_state.get("label") or "В работе" %}
           {% elif board_state.get("last_error") %}
             {% set live_text = "Ошибка: " ~ board_state.get("last_error") %}
-          {% elif board_state.get("progress") is not none %}
+          {% elif board_state.get("progress") %}
             {% set live_text = "Прогресс: " ~ board_state.get("progress") ~ "%" %}
           {% endif %}
           {% set preview = post.text or (item.main_text if item else "") or "" %}
@@ -166,12 +166,15 @@
             {% endif %}
             <div class="kanban-pills">
               <span class="pill" data-status-pill>{{ entry.status }}</span>
+              {% if processing_enabled %}
               <span class="pill {% if entry.is_eligible %}ok{% endif %}">{{ "подходит" if entry.is_eligible else "не подходит" }}</span>
               {% if entry.genre_primary %}<span class="pill">{{ entry.genre_primary }}</span>{% endif %}
               {% if draft %}<span class="pill ok">рерайт есть</span>{% else %}<span class="pill">без рерайта</span>{% endif %}
               {% if published %}<span class="pill ok">опубликован</span>{% endif %}
               {% if not entry.publication_allowed %}<span class="pill danger">запрещен</span>{% endif %}
+              {% else %}<span class="pill">не проверено</span>{% endif %}
             </div>
+            {% if processing_enabled %}
             {% if entry.genre_secondary %}
               <p class="status">{{ entry.genre_secondary|join(", ") }}</p>
             {% endif %}
@@ -180,6 +183,7 @@
               <span class="pill">реклама {{ entry.promo_score if entry.promo_score is not none else "?" }}</span>
               <span class="pill">событие {{ entry.event_score if entry.event_score is not none else "?" }}</span>
             </div>
+            {% endif %}
           </a>
         {% else %}
           <p class="muted kanban-empty">Записей нет.</p>
@@ -273,7 +277,7 @@
           applyActiveOnly(card);
         }
       }, 5000);
-    } else if (state.progress !== null && state.progress !== undefined) {
+    } else if (state.progress > 0) {
       setBadge(card, `Прогресс: ${state.progress}%`, state.status || "", "updated");
     } else {
       card.classList.remove("just-updated");

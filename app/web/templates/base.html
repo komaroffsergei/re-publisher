@@ -7,9 +7,11 @@
   <link rel="stylesheet" href="/static/styles.css?v=kanban-live-20260622-1">
 </head>
 <body>
+  {% set processing_enabled = request.app.state.settings.enable_processing %}
   <header class="topbar">
-    <a class="brand" href="/processed">Re Publisher</a>
+    <a class="brand" href="{{ '/processed' if processing_enabled else '/pipeline' }}">Re Publisher</a>
     <nav>
+      {% if processing_enabled %}
       <a href="/processed">Материалы</a>
       <a href="/yandex-genres">Yandex жанры</a>
       <a href="/codex-training">Codex обучение</a>
@@ -17,9 +19,12 @@
       <a href="/drafts">Черновики</a>
       <a href="/labels">Разметка</a>
       <a href="/models">Модели</a>
+      {% endif %}
       <a href="/pipeline">Конвейер</a>
+      {% if processing_enabled %}
       <a href="/rewrite-progress">Прогресс рерайта</a>
       <a href="/pipeline-prompts">Промпты</a>
+      {% endif %}
       <a href="/search">Поиск</a>
     </nav>
   </header>
