@@ -20,6 +20,6 @@ COPY alembic ./alembic
 RUN cp /app/config/certs/*.crt /usr/local/share/ca-certificates/ \
     && update-ca-certificates
 
-RUN pip install --no-cache-dir .
+RUN --mount=type=cache,target=/root/.cache/pip pip install --timeout 120 .
 
 CMD ["python", "-m", "app.main", "run", "--folder", "MAX"]
