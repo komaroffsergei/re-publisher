@@ -264,7 +264,7 @@ async def download_message_media(
     try:
         downloaded = await message.download_media(file=str(staging_dir), progress_callback=check_progress)
         if not downloaded:
-            return MediaDownloadResult(None, "failed", size_bytes, "Telegram returned no file")
+            return MediaDownloadResult(None, "missing", size_bytes)
         downloaded_path = Path(downloaded)
         actual_size = downloaded_path.stat().st_size
         if actual_size > settings.media_max_bytes:

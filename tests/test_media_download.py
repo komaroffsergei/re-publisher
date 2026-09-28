@@ -66,3 +66,18 @@ async def test_stream_crossing_limit_is_removed(tmp_path):
 
     assert result.status == "skipped_too_large"
     assert not any((tmp_path / "42" / "9").rglob("*.bin"))
+
+
+@pytest.mark.asyncio
+async def test_telegram_media_without_downloadable_file_is_missing(tmp_path):
+    message = FakeMessage(b"")
+
+    async def no_file(**_kwargs):
+        return None
+
+    message.download_media = no_file
+    result = await download_message_media(settings(tmp_path), message, 42, 10)
+
+    assert result.status == "missing"
+    assert result.error is None
+    assert not list((tmp_path / "42" / "10").glob(".tmp-*"))
