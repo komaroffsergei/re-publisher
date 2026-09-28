@@ -1320,6 +1320,7 @@ def register_routes(app: FastAPI) -> None:
 
     @app.post("/api/drafts/{draft_id}/approve", dependencies=[auth])
     async def approve_draft(request: Request, draft_id: int):
+        require_processing_enabled(request)
         async with session_factory(request)() as session:
             await session.execute(update(PublicationDraft).where(PublicationDraft.id == draft_id).values(status="approved"))
             await session.commit()
@@ -1327,6 +1328,7 @@ def register_routes(app: FastAPI) -> None:
 
     @app.post("/api/drafts/{draft_id}/reject", dependencies=[auth])
     async def reject_draft(request: Request, draft_id: int):
+        require_processing_enabled(request)
         async with session_factory(request)() as session:
             await session.execute(update(PublicationDraft).where(PublicationDraft.id == draft_id).values(status="rejected"))
             await session.commit()
@@ -1334,6 +1336,7 @@ def register_routes(app: FastAPI) -> None:
 
     @app.post("/api/drafts/{draft_id}/edit", dependencies=[auth])
     async def edit_draft(request: Request, draft_id: int, title: str = Form(""), body: str = Form(""), tags: str = Form("")):
+        require_processing_enabled(request)
         async with session_factory(request)() as session:
             await session.execute(
                 update(PublicationDraft)
@@ -1358,6 +1361,7 @@ def register_routes(app: FastAPI) -> None:
 
     @app.post("/api/labels/{post_id}", dependencies=[auth])
     async def save_label(request: Request, post_id: int, label: str = Form(...), reviewer: str = Form("web")):
+        require_processing_enabled(request)
         async with session_factory(request)() as session:
             await session.execute(
                 PostLabel.__table__.insert().values(
@@ -1384,6 +1388,7 @@ def register_routes(app: FastAPI) -> None:
 
     @app.post("/api/models/{model_id}/promote", dependencies=[auth])
     async def promote_model(request: Request, model_id: int):
+        require_processing_enabled(request)
         async with session_factory(request)() as session:
             model = (await session.execute(select(ModelVersion).where(ModelVersion.id == model_id))).scalar_one_or_none()
             if not model:
@@ -1684,6 +1689,7 @@ def register_routes(app: FastAPI) -> None:
 
     @app.post("/api/rewrite-progress/reset-link-summary-queue", dependencies=[auth])
     async def rewrite_progress_reset_link_summary_queue(request: Request):
+        require_processing_enabled(request)
         async with session_factory(request)() as session:
             result = await reset_link_summary_queue(session)
             progress = await rewrite_progress_data(session)
@@ -1809,6 +1815,7 @@ def register_routes(app: FastAPI) -> None:
 
     @app.post("/api/pipeline/{entry_id}/block", dependencies=[auth])
     async def pipeline_block(request: Request, entry_id: int, reason: str = Form("")):
+        require_processing_enabled(request)
         async with session_factory(request)() as session:
             await session.execute(
                 update(PipelineEntry)
@@ -1820,6 +1827,7 @@ def register_routes(app: FastAPI) -> None:
 
     @app.post("/api/pipeline/{entry_id}/allow", dependencies=[auth])
     async def pipeline_allow(request: Request, entry_id: int):
+        require_processing_enabled(request)
         async with session_factory(request)() as session:
             entry = (await session.execute(select(PipelineEntry).where(PipelineEntry.id == entry_id))).scalar_one_or_none()
             if not entry:
@@ -1838,6 +1846,7 @@ def register_routes(app: FastAPI) -> None:
 
     @app.post("/api/pipeline/{entry_id}/schedule", dependencies=[auth])
     async def pipeline_schedule(request: Request, entry_id: int, scheduled_publish_at: str = Form("")):
+        require_processing_enabled(request)
         value = None
         raw = scheduled_publish_at.strip()
         if raw:
@@ -1904,6 +1913,7 @@ def register_routes(app: FastAPI) -> None:
         common_user_prompt: str = Form(...),
         label_prompts_json: str = Form("{}"),
     ):
+        require_processing_enabled(request)
         if prompt_name not in {PIPELINE_REWRITE_PROMPT, LINK_SUMMARY_PROMPT}:
             raise HTTPException(400, "Unknown prompt name.")
         try:

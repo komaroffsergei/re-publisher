@@ -210,6 +210,7 @@
         <span class="pill">{{ "разрешена" if entry.publication_allowed else "запрещена" }}</span>
         <span class="pill">{{ "опубликована" if published else "не опубликована" }}</span>
       </p>
+      {% if processing_enabled %}
       <form method="post" action="/api/pipeline/{{ entry.id }}/schedule" class="stack narrow-form">
         <label>Дата автоматической публикации
           <input type="datetime-local" name="scheduled_publish_at" value="{{ entry.scheduled_publish_at.strftime('%Y-%m-%dT%H:%M') if entry.scheduled_publish_at else '' }}">
@@ -223,6 +224,7 @@
         </form>
       {% else %}
         <form method="post" action="/api/pipeline/{{ entry.id }}/allow" class="inline"><button type="submit">Вернуть в публикацию</button></form>
+      {% endif %}
       {% endif %}
     </div>
   </div>
