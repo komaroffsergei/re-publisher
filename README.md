@@ -8,6 +8,18 @@ Collects Telegram messages from all chats, channels, and groups resolved from a 
 
 This service uses a user MTProto session through Telethon. It does not use the Bot API.
 
+## Текущий режим на VPS
+
+`publisher.komaroff-dev.ru` закрыт Nginx Basic Auth и показывает **реальные** сообщения из папки `MAX` пользовательского Telegram-аккаунта. Первый обход каждого чата берёт последние 168 часов. После него collector принимает новые сообщения, правки и удаления; папка перечитывается раз в 300 секунд. Сообщение и запись конвейера сохраняются вместе, со стадией и статусом `received` — это колонка «Не готовы».
+
+В production работают только `web` и `collector` из [`deploy/publisher.compose.yaml`](deploy/publisher.compose.yaml). Обработка, комментарии, классификация, рерайт и публикация отключены настройками. POST-маршруты, которые меняют состояние обработки или публикации, отвечают `409`. Код этих этапов оставлен в репозитории для следующего этапа, но не выполняется. Синтетических записей и demo-моделей в текущей БД нет.
+
+На сервере конфигурация лежит в `/srv/portfolio/publisher/.env`, Telethon-сессия — в `/srv/portfolio/publisher/sessions/`, медиа — в `/srv/portfolio/publisher/media/`, данные — в отдельной базе `publisher` общего PostgreSQL. Секреты и файл сессии не входят в Git и должны оставаться с правами `600`. База и служебные порты не публикуются наружу. Telegram-трафик collector идёт через закрытый SOCKS sidecar в сетевом пространстве `codex-proxy`; после пересоздания `codex-proxy` связь sidecar с новым контейнером нужно проверить и при необходимости восстановить.
+
+Медиа до 100 МБ скачиваются во временный каталог и переименовываются после завершения. Файлы больше лимита получают статус `skipped_too_large`; сообщения без скачиваемого файла — `missing`. Неудачная загрузка файла не удаляет само сообщение.
+
+Проверка после перезапуска: `docker compose --env-file .env -f compose.yaml ps`, затем `docker compose --env-file .env -f compose.yaml logs --tail=100 collector`. На странице `/pipeline` новые записи должны появляться в «Не готовы»; `/health` должен отвечать `200` после авторизации. Одноразовый повторный обход запускается `docker compose --env-file .env -f compose.yaml run --rm collector python -m app.main sync --folder MAX` только когда постоянный collector остановлен, чтобы два процесса не писали в один файл Telethon-сессии.
+
 ## Configuration
 
 Create `secrets/app.env`:
