@@ -20,6 +20,7 @@ dependencies = [
     "pandas>=2.2,<3",
     "Pillow>=10,<12",
     "pydantic-settings>=2.3,<3",
+    "python-socks[asyncio]>=2.5,<3",
     "python-multipart>=0.0.9,<1",
     "PyYAML>=6,<7",
     "qrcode>=8,<9",

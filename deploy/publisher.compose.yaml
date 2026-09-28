@@ -35,6 +35,7 @@ services:
   collector:
     <<: *app
     command: [python, -m, app.main, run, --folder, MAX]
+    networks: [backend, telegram-egress]
     healthcheck:
       test: [CMD-SHELL, "test -s /app/sessions/max_collector.session"]
       interval: 30s
@@ -45,3 +46,4 @@ services:
 networks:
   backend: {external: true, name: portfolio-backend}
   edge: {external: true, name: portfolio-edge}
+  telegram-egress: {external: true, name: codex-proxy_default}

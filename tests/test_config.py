@@ -7,6 +7,7 @@ def test_config_loads_from_environment(monkeypatch):
     monkeypatch.setenv("TG_API_ID", "12345")
     monkeypatch.setenv("TG_API_HASH", "hash")
     monkeypatch.setenv("DB_DSN", "postgresql+asyncpg://user:pass@localhost:5432/db")
+    monkeypatch.setenv("TELEGRAM_PROXY_URL", "socks5://proxy.internal:1080")
 
     settings = Settings(_env_file=None)
 
@@ -19,6 +20,7 @@ def test_config_loads_from_environment(monkeypatch):
     assert settings.download_media is True
     assert settings.sync_lookback_hours == 168
     assert settings.media_max_bytes == 104_857_600
+    assert settings.telegram_proxy_url == "socks5://proxy.internal:1080"
     assert settings.enable_processing is False
 
 

@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     tg_api_hash: str | None = Field(default=None, validation_alias="TG_API_HASH")
     tg_phone: str | None = Field(default=None, validation_alias="TG_PHONE")
     tg_session_name: str = Field(default="/app/sessions/max_collector", validation_alias="TG_SESSION_NAME")
+    telegram_proxy_url: str | None = Field(default=None, validation_alias="TELEGRAM_PROXY_URL")
     folder_name: str = Field(default="MAX", validation_alias="FOLDER_NAME")
     db_dsn: str = Field(validation_alias="DB_DSN")
     db_pool_size: int = Field(default=3, ge=1, validation_alias="DB_POOL_SIZE")
