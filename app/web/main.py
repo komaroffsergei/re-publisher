@@ -648,7 +648,7 @@ async def active_pipeline_snapshot_for_app(app: FastAPI, session) -> dict[str, A
 
 
 async def pipeline_entry_post_id(app: FastAPI, entry_id: int) -> tuple[int | None, int | None]:
-    async with create_session_factory(app.state.settings)() as session:
+    async with app.state.session_factory() as session:
         row = (
             await session.execute(
                 select(PipelineEntry.source_post_id, PipelineEntry.content_item_id).where(PipelineEntry.id == entry_id)
@@ -658,7 +658,7 @@ async def pipeline_entry_post_id(app: FastAPI, entry_id: int) -> tuple[int | Non
 
 
 async def sync_entry_stage_for_post(app: FastAPI, post_id: int) -> dict[str, Any]:
-    async with create_session_factory(app.state.settings)() as session:
+    async with app.state.session_factory() as session:
         entry = await sync_pipeline_entry_stage(session, post_id)
         await session.commit()
         return {"entry_id": entry.id, "stage": entry.stage, "status": entry.status, "content_item_id": entry.content_item_id} if entry else {}
@@ -697,7 +697,7 @@ async def pipeline_entry_loop(app: FastAPI, entry_id: int, lock: PipelineWorkLoc
     if lock is None:
         lock = await try_acquire_pipeline_work_lock(app.state.settings, owner="web_pipeline", entry_id=entry_id)
         if lock is None:
-            async with create_session_factory(app.state.settings)() as session:
+            async with app.state.session_factory() as session:
                 active = await active_pipeline_snapshot_for_app(app, session)
             state.update(
                 {
@@ -775,7 +775,7 @@ async def rewrite_worker_loop(app: FastAPI, *, limit: int, interval_seconds: int
             state["last_heartbeat"] = now_moscow_iso()
             lock = await try_acquire_pipeline_work_lock(app.state.settings, owner="web_rewrite_worker")
             if lock is None:
-                async with create_session_factory(app.state.settings)() as session:
+                async with app.state.session_factory() as session:
                     active = await active_pipeline_snapshot_for_app(app, session)
                 result = {"rewritten": 0, "busy": True, "active": active}
                 state["phase"] = "busy"
