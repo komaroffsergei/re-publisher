@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import secrets
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -54,7 +55,7 @@ from app.content.topic_audit import latest_topic_audit_summary, report_root
 from app.content.yandex_genre_classifier import usage_total_tokens
 from app.content.search import build_search_statement
 from app.content.url_extractor import extract_post_links
-from app.db import create_session_factory
+from app.db import create_engine, create_session_factory
 from app.logging_setup import setup_logging
 from app.models import (
     ContentItem,
@@ -124,17 +125,24 @@ def web_main() -> None:
 def create_app() -> FastAPI:
     settings = get_settings()
     setup_logging(settings.log_level)
-    app = FastAPI(title="Re Publisher")
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        engine = create_engine(settings)
+        app.state.db_engine = engine
+        app.state.session_factory = create_session_factory(engine=engine)
+        async with app.state.session_factory() as session:
+            await reset_stale_pipeline_activity(session)
+            await session.commit()
+        try:
+            yield
+        finally:
+            await engine.dispose()
+
+    app = FastAPI(title="Re Publisher", lifespan=lifespan)
     app.state.settings = settings
     app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
     register_routes(app)
-
-    @app.on_event("startup")
-    async def cleanup_pipeline_activity_on_startup() -> None:
-        async with create_session_factory(settings)() as session:
-            await reset_stale_pipeline_activity(session)
-            await session.commit()
-
     return app
 
 
@@ -151,7 +159,12 @@ def require_auth(request: Request, credentials: HTTPBasicCredentials | None = De
 
 
 def session_factory(request: Request):
-    return create_session_factory(request.app.state.settings)
+    return request.app.state.session_factory
+
+
+def require_processing_enabled(request: Request) -> None:
+    if not request.app.state.settings.enable_processing:
+        raise HTTPException(status_code=409, detail="Processing is disabled for collector-only runtime")
 
 
 def serialize_model(obj: Any) -> dict[str, Any]:
@@ -1685,6 +1698,7 @@ def register_routes(app: FastAPI) -> None:
         limit: int = Form(10),
         interval_seconds: int = Form(30),
     ):
+        require_processing_enabled(request)
         state = rewrite_worker_state(request.app)
         task = state.get("task")
         if task and not task.done():
@@ -1761,6 +1775,7 @@ def register_routes(app: FastAPI) -> None:
 
     @app.post("/api/pipeline/{entry_id}/run-pipeline", dependencies=[auth])
     async def pipeline_run(request: Request, entry_id: int):
+        require_processing_enabled(request)
         state = pipeline_run_state(request.app, entry_id)
         task = state.get("task")
         if task and not task.done():
@@ -1834,6 +1849,7 @@ def register_routes(app: FastAPI) -> None:
 
     @app.post("/api/pipeline/{entry_id}/rewrite", dependencies=[auth])
     async def pipeline_rewrite(request: Request, entry_id: int):
+        require_processing_enabled(request)
         result = await rewrite_one(entry_id, ignore_backlog_cap=True, allow_pending_link_summaries=True)
         if request.headers.get("x-requested-with") == "fetch" or "application/json" in request.headers.get("accept", ""):
             return result
@@ -1984,6 +2000,7 @@ def register_routes(app: FastAPI) -> None:
 
     @app.post("/api/pipeline/retry/{post_id}", dependencies=[auth])
     async def api_pipeline_retry(request: Request, post_id: int):
+        require_processing_enabled(request)
         async with session_factory(request)() as session:
             await session.execute(update(ContentPipelineState).where(ContentPipelineState.post_id == post_id).values(last_error=None, retry_count=0))
             await session.commit()

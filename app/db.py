@@ -14,11 +14,25 @@ class Base(AsyncAttrs, DeclarativeBase):
 
 
 def create_engine(settings: Settings) -> AsyncEngine:
-    return create_async_engine(settings.db_dsn, pool_pre_ping=True)
+    return create_async_engine(
+        settings.db_dsn,
+        pool_pre_ping=True,
+        pool_size=settings.db_pool_size,
+        max_overflow=settings.db_max_overflow,
+        pool_timeout=settings.db_pool_timeout_seconds,
+    )
 
 
-def create_session_factory(settings: Settings) -> async_sessionmaker[AsyncSession]:
-    return async_sessionmaker(create_engine(settings), expire_on_commit=False)
+def create_session_factory(
+    settings: Settings | None = None,
+    *,
+    engine: AsyncEngine | None = None,
+) -> async_sessionmaker[AsyncSession]:
+    if engine is None:
+        if settings is None:
+            raise ValueError("settings or engine is required")
+        engine = create_engine(settings)
+    return async_sessionmaker(engine, expire_on_commit=False)
 
 
 @asynccontextmanager

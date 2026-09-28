@@ -19,10 +19,11 @@ TG_PHONE=
 TG_SESSION_NAME=./sessions/max_collector
 FOLDER_NAME=MAX
 DB_DSN=postgresql+asyncpg://max_collector:max_collector@localhost:55432/max_collector
-COLLECT_COMMENTS=true
-DOWNLOAD_MEDIA=false
+COLLECT_COMMENTS=false
+DOWNLOAD_MEDIA=true
 MEDIA_DIR=./media
-SYNC_LIMIT_PER_CHAT=0
+SYNC_LOOKBACK_HOURS=168
+MEDIA_MAX_BYTES=104857600
 FOLDER_REFRESH_SECONDS=300
 LOG_LEVEL=INFO
 ```
@@ -97,7 +98,7 @@ Run an initial or incremental sync:
 python -m app.main sync --folder MAX
 ```
 
-For a bounded local test, set `SYNC_LIMIT_PER_CHAT=20` in `secrets/app.env`.
+Normal synchronization imports messages from the rolling `SYNC_LOOKBACK_HOURS` window on first contact with a chat, then follows new messages incrementally. Use the explicit `sync-full` command only when full history is intentionally required.
 
 ## Daemon
 

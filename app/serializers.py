@@ -92,7 +92,16 @@ def raw_message(message: Any) -> dict:
     return serialized if isinstance(serialized, dict) else {"value": serialized}
 
 
-def message_to_post_dict(client: Any, chat_entity: Any, message: Any, media_path: str | None = None) -> dict[str, Any]:
+def message_to_post_dict(
+    client: Any,
+    chat_entity: Any,
+    message: Any,
+    media_path: str | None = None,
+    *,
+    media_size_bytes: int | None = None,
+    media_download_status: str = "missing",
+    media_error: str | None = None,
+) -> dict[str, Any]:
     return {
         "chat_peer_id": peer_id(chat_entity),
         "message_id": int(getattr(message, "id")),
@@ -106,6 +115,9 @@ def message_to_post_dict(client: Any, chat_entity: Any, message: Any, media_path
         "replies_count": replies_count(message),
         "media_type": media_type(message),
         "media_path": media_path,
+        "media_size_bytes": media_size_bytes,
+        "media_download_status": media_download_status,
+        "media_error": media_error,
         "raw": raw_message(message),
         "is_deleted": False,
     }

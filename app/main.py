@@ -15,7 +15,7 @@ from app.config import Settings, get_settings
 from app.folders import extract_filter_title, resolve_folder_chats, fetch_dialog_filters
 from app.logging_setup import setup_logging
 from app.sync import run_service, sync_folder, sync_folder_full_history
-from app.telegram_client import create_telegram_client
+from app.telegram_client import create_telegram_client, secure_session_permissions
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -103,10 +103,11 @@ def login(force_sms: bool = typer.Option(False, "--force-sms", help="Ask Telegra
             me = await client.get_me()
             safe_echo(
                 f"Logged in: id={getattr(me, 'id', None)} "
-                f"username={getattr(me, 'username', None)} phone={getattr(me, 'phone', None)}"
+                f"username={getattr(me, 'username', None)}"
             )
         finally:
             await client.disconnect()
+            secure_session_permissions(settings)
 
     run_async(_login())
 
@@ -127,7 +128,7 @@ def login_qr(
                 me = await client.get_me()
                 safe_echo(
                     f"Already logged in: id={getattr(me, 'id', None)} "
-                    f"username={getattr(me, 'username', None)} phone={getattr(me, 'phone', None)}"
+                    f"username={getattr(me, 'username', None)}"
                 )
                 return
 
@@ -148,10 +149,11 @@ def login_qr(
                 me = await client.get_me()
             safe_echo(
                 f"Logged in: id={getattr(me, 'id', None)} "
-                f"username={getattr(me, 'username', None)} phone={getattr(me, 'phone', None)}"
+                f"username={getattr(me, 'username', None)}"
             )
         finally:
             await client.disconnect()
+            secure_session_permissions(settings)
 
     run_async(_login_qr())
 

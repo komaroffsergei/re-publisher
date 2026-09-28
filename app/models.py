@@ -43,6 +43,9 @@ class TelegramPost(TimestampMixin, Base):
     replies_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     media_type: Mapped[str | None] = mapped_column(Text, nullable=True)
     media_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    media_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    media_download_status: Mapped[str] = mapped_column(Text, server_default="missing", nullable=False)
+    media_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw: Mapped[dict] = mapped_column(JSONB, nullable=False)
     is_deleted: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
 

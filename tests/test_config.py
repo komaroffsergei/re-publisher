@@ -13,8 +13,13 @@ def test_config_loads_from_environment(monkeypatch):
     assert settings.tg_api_id == 12345
     assert settings.tg_api_hash == "hash"
     assert settings.folder_name == "MAX"
-    assert settings.collect_comments is True
+    assert settings.db_pool_size == 3
+    assert settings.db_max_overflow == 1
+    assert settings.collect_comments is False
     assert settings.download_media is True
+    assert settings.sync_lookback_hours == 168
+    assert settings.media_max_bytes == 104_857_600
+    assert settings.enable_processing is False
 
 
 def test_config_loads_yandex_settings(monkeypatch):
