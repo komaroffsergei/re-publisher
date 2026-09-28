@@ -4,12 +4,18 @@
 <section class="toolbar">
   <div>
     <h1>Конвейер</h1>
-    <p class="muted">Полный цикл поста: получение из TG, сортировка, обогащение, рерайт, готовность и публикация.</p>
+    {% if processing_enabled %}
+      <p class="muted">Полный цикл поста: получение из TG, сортировка, обогащение, рерайт, готовность и публикация.</p>
+    {% else %}
+      <p class="muted">Сообщения из папки MAX. Обработка и публикация сейчас отключены.</p>
+    {% endif %}
   </div>
+  {% if processing_enabled %}
   <div class="worker-actions">
     <a class="button" href="/rewrite-progress">Прогресс рерайта</a>
     <a class="button" href="/pipeline-prompts">Промпты</a>
   </div>
+  {% endif %}
 </section>
 
 <section class="metric-row pipeline-metrics">

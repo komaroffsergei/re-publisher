@@ -19,14 +19,14 @@
         {% if rewrite_status.latest_attempt %} · attempt #{{ rewrite_status.latest_attempt.id }} {{ rewrite_status.latest_attempt.status }}{% endif %}
       </p>
     </div>
-    <div class="worker-actions">
+    {% if processing_enabled %}<div class="worker-actions">
       <form id="rewrite-form" method="post" action="/api/pipeline/{{ entry.id }}/rewrite" class="inline">
         <button id="rewrite-button" type="submit">{{ "Рерайт выполняется" if rewrite_status.is_running else "Повторить рерайт" }}</button>
       </form>
       <form id="pipeline-form" method="post" action="/api/pipeline/{{ entry.id }}/run-pipeline" class="inline">
         <button id="pipeline-button" type="submit">Pipeline</button>
       </form>
-    </div>
+    </div>{% else %}<p class="muted">Обработка и публикация отключены.</p>{% endif %}
   </div>
   <progress id="rewrite-progress" value="{{ rewrite_status.progress }}" max="100"></progress>
   <p id="rewrite-error" class="error">{{ rewrite_status.last_error or "" }}</p>

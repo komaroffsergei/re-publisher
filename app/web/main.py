@@ -1583,6 +1583,7 @@ def register_routes(app: FastAPI) -> None:
                 "search_query": search_query,
                 "stage_labels": PIPELINE_STAGE_LABELS,
                 "stages": PIPELINE_STAGES,
+                "processing_enabled": settings.enable_processing,
                 "sort_options": sort_options,
                 "ready_status": READY_DRAFT_STATUS,
                 "active_states": active_states,
@@ -1663,6 +1664,7 @@ def register_routes(app: FastAPI) -> None:
                 "media_assets": media_assets,
                 "rewrite_status": rewrite_status,
                 "source_post_url": source_post_url,
+                "processing_enabled": request.app.state.settings.enable_processing,
             },
         )
 
