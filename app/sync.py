@@ -319,11 +319,14 @@ async def iter_initial_messages(
     client: Any,
     last_message_id: int | None,
     *,
+    before_message_id: int | None = None,
     now: datetime | None = None,
     metrics: ChatSyncMetrics | None = None,
 ):
     cutoff = sync_cutoff(settings, now)
     kwargs = {"min_id": last_message_id} if last_message_id else {}
+    if before_message_id is not None:
+        kwargs["offset_id"] = before_message_id
     async for message in client.iter_messages(entity, **kwargs):
         if not is_within_sync_window(message, cutoff):
             if metrics is not None:
@@ -386,6 +389,8 @@ async def sync_chat(
     on_saved_post: Callable[[int], None] | None = None,
 ) -> ChatSyncMetrics:
     metrics = ChatSyncMetrics()
+    resume_before_id: int | None = None
+    max_message_id: int | None = None
     try:
         while True:
             try:
@@ -393,7 +398,8 @@ async def sync_chat(
                     await upsert_chat(session, settings.folder_name, chat)
                     last_message_id = None if force_full_history else await get_last_message_id(session, chat.peer_id)
 
-                max_message_id = last_message_id
+                if max_message_id is None:
+                    max_message_id = last_message_id
                 if force_full_history:
                     message_iter = client.iter_messages(chat.entity, limit=None, reverse=True)
                 else:
@@ -402,6 +408,7 @@ async def sync_chat(
                         chat.entity,
                         client,
                         last_message_id,
+                        before_message_id=resume_before_id,
                         metrics=metrics,
                     )
                 async for message in message_iter:
@@ -422,6 +429,8 @@ async def sync_chat(
                         metrics.updated += 1
                     metrics.add_media(media_status)
                     max_message_id = max(int(getattr(message, "id")), max_message_id or 0)
+                    if not force_full_history:
+                        resume_before_id = int(getattr(message, "id"))
                     if on_saved_post:
                         on_saved_post(post_id)
                 async with session_scope(session_factory) as session:
