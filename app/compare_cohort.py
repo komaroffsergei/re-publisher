@@ -14,7 +14,7 @@ from app.config import get_settings
 from app.db import create_engine, create_session_factory, session_scope
 from app.import_comparison import load_cohort
 from app.models import PipelineEntry, TaxonomyClassification, TelegramPost
-from app.taxonomy.jobs import enqueue
+from app.taxonomy.jobs import MODEL_VERSIONS, enqueue, text_sha256
 
 
 async def main() -> None:
@@ -45,6 +45,18 @@ async def main() -> None:
         for model_key in ("tfidf", "minilm"):
             for entry_id in entries:
                 async with session_scope(factory) as session:
+                    previous = (await session.execute(
+                        select(TaxonomyClassification, TelegramPost.text)
+                        .join(TelegramPost, TelegramPost.id == TaxonomyClassification.source_post_id)
+                        .where(TaxonomyClassification.pipeline_entry_id == entry_id,
+                               TaxonomyClassification.model_key == model_key)
+                    )).first()
+                    if previous is not None:
+                        job, current_text = previous
+                        if (job.model_version == MODEL_VERSIONS[model_key]
+                                and job.text_sha256 == text_sha256(current_text)
+                                and job.status in {"queued", "running", "complete"}):
+                            continue
                     await enqueue(session, entry_id, model_key)
             deadline = time.monotonic() + args.timeout_seconds
             while True:

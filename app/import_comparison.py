@@ -80,21 +80,26 @@ async def main() -> None:
                     raise RuntimeError(f"selected message changed after cohort freeze: {peer}/{message_id}")
                 checked.append((chat, message))
         async with factory() as session:
-            existing = []
+            existing: set[tuple[int, int]] = set()
             for chat, message in checked:
-                row = (await session.execute(select(TelegramPost.id).where(
+                row = (await session.execute(select(TelegramPost.id, TelegramPost.text).where(
                     TelegramPost.chat_peer_id == chat.peer_id,
                     TelegramPost.message_id == message.id,
                 ))).scalar_one_or_none()
                 if row is not None:
-                    existing.append((chat.peer_id, message.id))
-        if existing:
+                    expected_hash = selected[chat.peer_id][message.id]["text_sha256"]
+                    if hashlib.sha256((row[1] or "").encode("utf-8")).hexdigest() != expected_hash:
+                        raise RuntimeError(f"existing message text differs: {chat.peer_id}/{message.id}")
+                    existing.add((chat.peer_id, message.id))
+        if existing and not args.apply:
             raise RuntimeError(f"comparison cohort contains {len(existing)} already-imported messages")
         if not args.apply:
             print(json.dumps({"verified": len(checked), "chats": len(selected), "new": len(checked), "applied": False}))
             return
         inserted = 0
         for chat, message in checked:
+            if (chat.peer_id, message.id) in existing:
+                continue
             async with session_scope(factory) as session:
                 await upsert_chat(session, settings.folder_name, chat)
                 _, fresh, _ = await save_message(
@@ -105,6 +110,7 @@ async def main() -> None:
                     raise RuntimeError(f"message became imported during this run: {chat.peer_id}/{message.id}")
                 inserted += 1
         print(json.dumps({"verified": len(checked), "chats": len(selected), "inserted": inserted,
+                          "already_imported": len(existing), "total_available": inserted + len(existing),
                           "media_downloaded": args.download_media, "applied": True}))
     finally:
         await client.disconnect()
