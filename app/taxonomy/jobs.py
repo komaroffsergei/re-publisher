@@ -113,6 +113,16 @@ async def enqueue(session: AsyncSession, entry_id: int, model_key: str) -> Taxon
     fingerprint = text_sha256(post.text)
     if job is not None and job.status in {"queued", "running"} and job.text_sha256 == fingerprint:
         return job
+    other_active = (await session.execute(
+        select(TaxonomyClassification.id).where(
+            TaxonomyClassification.pipeline_entry_id == entry_id,
+            TaxonomyClassification.model_key != model_key,
+            TaxonomyClassification.status.in_(("queued", "running")),
+            TaxonomyClassification.text_sha256 == fingerprint,
+        ).limit(1)
+    )).scalar_one_or_none()
+    if other_active is not None:
+        raise HTTPException(409, detail="Карточка уже обрабатывается другой моделью")
     now = datetime.now(timezone.utc)
     if job is None:
         job = TaxonomyClassification(
