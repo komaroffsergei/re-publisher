@@ -42,6 +42,9 @@ class MiniLmTaxonomyModel:
         expected += self.taxonomy["binary_features"]
         if training["taxonomy_version"] != self.taxonomy["version"] or set(training["names"]) != set(expected):
             raise ValueError("MiniLM taxonomy labels differ from the checkpoint")
+        self.max_length = int(training["max_length"])
+        if not 128 <= self.max_length <= 512:
+            raise ValueError("MiniLM max_length is outside the supported range")
         torch.set_num_threads(1)
         self.names = training["names"]
         self.tokenizer = AutoTokenizer.from_pretrained(candidate / "tokenizer", local_files_only=True)
@@ -52,7 +55,7 @@ class MiniLmTaxonomyModel:
 
     def classify(self, text: str) -> dict:
         with torch.inference_mode():
-            encoded = self.tokenizer(text, truncation=True, max_length=256, return_tensors="pt")
+            encoded = self.tokenizer(text, truncation=True, max_length=self.max_length, return_tensors="pt")
             logits, complexity = self.model(encoded)
             scores = dict(zip(self.names, torch.sigmoid(logits)[0].tolist()))
             return format_result(self.taxonomy, scores, float(complexity[0]))

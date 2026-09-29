@@ -175,13 +175,14 @@ def main():
     candidate.load_state_dict(load_file(str(args.candidate / "epoch-2.safetensors")))
     candidate.eval()
     loaded_model_memory = working_set_bytes()
+    max_length = int(json.loads((args.candidate / "training.json").read_text(encoding="utf-8"))["max_length"])
     candidate_val = json.loads((args.candidate / "validation-epoch-2.json").read_text(encoding="utf-8"))
     candidate_thresholds = {name: candidate_val[name]["threshold"] for name in names}
     candidate_scores, candidate_complexity = [], []
     elapsed = []
     with torch.no_grad():
         for text in texts:
-            inputs = tokenizer(text, truncation=True, max_length=256, return_tensors="pt")
+            inputs = tokenizer(text, truncation=True, max_length=max_length, return_tensors="pt")
             start = time.perf_counter()
             logits, comp = candidate(inputs)
             elapsed.append(time.perf_counter() - start)
