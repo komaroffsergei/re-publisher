@@ -153,11 +153,16 @@ async def enqueue(session: AsyncSession, entry_id: int, model_key: str) -> Taxon
 
 
 async def invalidate_if_edited(session: AsyncSession, post_id: int, text: str | None) -> bool:
+    fingerprint = text_sha256(text)
     jobs = list((await session.execute(
         select(TaxonomyClassification).where(TaxonomyClassification.source_post_id == post_id).with_for_update()
     )).scalars())
-    changed = [job for job in jobs if job.text_sha256 != text_sha256(text)]
-    if not changed:
+    changed = [job for job in jobs if job.text_sha256 != fingerprint]
+    entry = (await session.execute(
+        select(PipelineEntry).where(PipelineEntry.source_post_id == post_id).with_for_update()
+    )).scalar_one_or_none()
+    marked_stale = bool(entry and entry.marked_text_sha256 and entry.marked_text_sha256 != fingerprint)
+    if not changed and not marked_stale:
         return False
     now = datetime.now(timezone.utc)
     for job in changed:
@@ -172,11 +177,16 @@ async def invalidate_if_edited(session: AsyncSession, post_id: int, text: str | 
         job.result = None
         job.error = None
         job.updated_at = now
-    entry = (await session.execute(select(PipelineEntry).where(PipelineEntry.id == jobs[0].pipeline_entry_id))).scalar_one_or_none()
-    if entry is not None and entry.stage == "sorted" and entry.classification_id is None:
-        entry.stage = "received"
-        entry.status = "received"
-        entry.last_operation_at = now
+    if entry is not None:
+        if marked_stale:
+            entry.marked_text = None
+            entry.marked_source_url = None
+            entry.marked_text_sha256 = None
+            entry.marked_at = None
+        if entry.stage in {"sorted", "marking"} and entry.classification_id is None:
+            entry.stage = "received"
+            entry.status = "received"
+            entry.last_operation_at = now
     return True
 
 

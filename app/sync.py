@@ -28,7 +28,7 @@ from app.content.pipeline_activity import reset_stale_pipeline_activity, try_acq
 from app.content.pipeline_entries import ensure_pipeline_entry_for_post, sync_pipeline_entry_stage
 from app.db import create_engine, create_session_factory, session_scope
 from app.folders import FolderChat, resolve_folder_chats
-from app.models import TelegramChat, TelegramComment, TelegramPost, TelegramSyncState
+from app.models import PipelineEntry, TelegramChat, TelegramComment, TelegramPost, TelegramSyncState
 from app.serializers import message_to_post_dict, peer_id
 from app.telegram_client import create_telegram_client
 
@@ -557,6 +557,18 @@ async def mark_messages_deleted(session: AsyncSession, chat_peer_id: int, messag
             TelegramPost.message_id.in_(message_ids),
         )
         .values(is_deleted=True, updated_at=func.now())
+    )
+    await session.execute(
+        PipelineEntry.__table__.update()
+        .where(PipelineEntry.source_post_id.in_(
+            select(TelegramPost.id).where(
+                TelegramPost.chat_peer_id == chat_peer_id,
+                TelegramPost.message_id.in_(message_ids),
+            )
+        ))
+        .values(stage="received", status="source_deleted", marked_text=None,
+                marked_source_url=None, marked_text_sha256=None, marked_at=None,
+                last_operation_at=func.now(), updated_at=func.now())
     )
 
 

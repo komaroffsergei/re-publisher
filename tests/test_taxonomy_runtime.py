@@ -8,7 +8,7 @@ import numpy as np
 from scipy.sparse import csr_matrix
 
 from app.taxonomy.inference import TaxonomyModel
-from app.taxonomy.jobs import enqueue, mark_without_text, public_job, public_run, text_sha256
+from app.taxonomy.jobs import enqueue, invalidate_if_edited, mark_without_text, public_job, public_run, text_sha256
 from app.models import TaxonomyRun
 
 
@@ -67,6 +67,26 @@ def test_edited_text_hides_outdated_result():
     assert public_job(job, "новый текст")["status"] == "stale"
     assert public_job(job, "новый текст")["result"] is None
     assert public_job(job, "старый текст")["result"] == {"top_3": [1]}
+
+
+async def test_edited_post_clears_saved_source_marking():
+    job = SimpleNamespace(text_sha256=text_sha256("старый текст"), current_run_id=None,
+                          status="complete", result={"top_3": []}, error=None, updated_at=None)
+    entry = SimpleNamespace(marked_text="старый текст с источником", marked_source_url="https://t.me/c/1/2",
+                            marked_text_sha256=text_sha256("старый текст"), marked_at=datetime.now(timezone.utc),
+                            stage="marking", status="marked", classification_id=None, last_operation_at=None)
+    session = MagicMock()
+    session.execute = AsyncMock(side_effect=[
+        SimpleNamespace(scalars=lambda: [job]),
+        SimpleNamespace(scalar_one_or_none=lambda: entry),
+    ])
+
+    assert await invalidate_if_edited(session, 42, "новый текст") is True
+    assert entry.marked_text is None
+    assert entry.marked_source_url is None
+    assert entry.marked_text_sha256 is None
+    assert entry.stage == "received"
+    assert job.status == "stale"
 
 
 async def test_empty_media_is_sorted_without_queuing_either_model():
