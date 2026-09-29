@@ -86,6 +86,7 @@ from app.models import (
     YandexGenreClassification,
 )
 from app.taxonomy.jobs import enqueue as enqueue_taxonomy, public_job
+from app.web.telegram_media import inline_media_type, local_telegram_media_path, telegram_media_for_post
 
 web_cli = typer.Typer(no_args_is_help=True)
 security = HTTPBasic(auto_error=False)
@@ -1638,6 +1639,7 @@ def register_routes(app: FastAPI) -> None:
             entry, _item, post, _chat, _classification, _draft, _published = row
             link_materials = await load_link_materials(session, entry.source_post_id)
             media_assets = await load_media_assets_for_post(session, entry.source_post_id, link_materials)
+            telegram_media = await telegram_media_for_post(session, post, request.app.state.settings.media_dir)
             post_segments = telegram_link_segments(post.text, post.raw)
             link_rows = []
             for material in link_materials:
@@ -1690,6 +1692,7 @@ def register_routes(app: FastAPI) -> None:
                 "draft_display_body": draft_display_body,
                 "link_rows": link_rows,
                 "media_assets": media_assets,
+                "telegram_media": telegram_media,
                 "rewrite_status": rewrite_status,
                 "source_post_url": source_post_url,
                 "processing_enabled": request.app.state.settings.enable_processing,
@@ -1977,6 +1980,31 @@ def register_routes(app: FastAPI) -> None:
         async with session_factory(request)() as session:
             result = await session.execute(build_search_statement(q=q, label=label).limit(50))
             return templates.TemplateResponse(request, "search.html", {"rows": list(result.scalars()), "q": q or "", "label": label or ""})
+
+    @app.get("/telegram-media/{post_id}", dependencies=[auth])
+    async def telegram_media_file(request: Request, post_id: int):
+        async with session_factory(request)() as session:
+            post = (
+                await session.execute(
+                    select(TelegramPost)
+                    .join(TelegramChat, TelegramChat.peer_id == TelegramPost.chat_peer_id)
+                    .where(
+                        TelegramPost.id == post_id,
+                        TelegramChat.folder_name == "MAX",
+                        TelegramPost.is_deleted.is_(False),
+                    )
+                )
+            ).scalar_one_or_none()
+            if post is None:
+                raise HTTPException(404)
+            path = local_telegram_media_path(request.app.state.settings.media_dir, post.media_path)
+            if path is None:
+                raise HTTPException(404)
+        mime_type, kind = inline_media_type(path)
+        headers = {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"}
+        if kind == "file":
+            headers["Content-Disposition"] = "attachment"
+        return FileResponse(path, media_type=mime_type, headers=headers)
 
     @app.get("/media/{asset_id}", dependencies=[auth])
     async def media_file(request: Request, asset_id: int):

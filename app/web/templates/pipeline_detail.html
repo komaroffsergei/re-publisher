@@ -88,6 +88,32 @@
   </article>
 </section>
 
+{% if telegram_media %}
+<article>
+  <h2>Вложения Telegram · {{ telegram_media|length }}</h2>
+  <div class="media-grid telegram-media-grid">
+    {% for media in telegram_media %}
+      <figure class="media-thumb {{ 'telegram-video' if media.kind == 'video' else '' }}">
+        {% if media.available and media.kind == "video" %}
+          <video src="/telegram-media/{{ media.post_id }}" controls preload="metadata" playsinline></video>
+        {% elif media.available and media.kind == "image" %}
+          <a href="/telegram-media/{{ media.post_id }}" target="_blank" rel="noopener noreferrer"><img src="/telegram-media/{{ media.post_id }}" alt="Вложение Telegram {{ loop.index }}" loading="lazy"></a>
+        {% elif media.available %}
+          <p><a href="/telegram-media/{{ media.post_id }}">Открыть вложение</a></p>
+        {% else %}
+          <p class="muted">Файл не скачан: {{ media.download_status_label }}</p>
+        {% endif %}
+        <figcaption>
+          <span>{{ loop.index }} / {{ telegram_media|length }}</span>
+          <span>сообщение {{ media.message_id }}</span>
+          {% if media.filename %}<span>{{ media.filename }}</span>{% endif %}
+        </figcaption>
+      </figure>
+    {% endfor %}
+  </div>
+</article>
+{% endif %}
+
 {% if media_assets %}
 <article>
   <h2>Медиа</h2>
