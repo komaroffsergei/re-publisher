@@ -14,7 +14,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install '.[dev]'
-      - run: pytest
+      - run: python -m pytest
         env:
           DB_DSN: postgresql+asyncpg://test:test@127.0.0.1/test
   image:
