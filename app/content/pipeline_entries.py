@@ -24,7 +24,9 @@ from app.models import (
     PublishedPost,
     TelegramChat,
     TelegramPost,
+    TaxonomyClassification,
 )
+from app.taxonomy.jobs import text_sha256
 
 PIPELINE_STAGE_RECEIVED = "received"
 PIPELINE_STAGE_SORTED = "sorted"
@@ -352,6 +354,20 @@ async def sync_pipeline_entry_stage(session: AsyncSession, post_id: int) -> Pipe
         is_enriched=readiness.has_enrichment,
         is_failed_or_incomplete=status in INCOMPLETE_ENTRY_STATUSES,
     )
+    if classification is None and published is None:
+        taxonomy_job = (
+            await session.execute(
+                select(TaxonomyClassification).where(TaxonomyClassification.pipeline_entry_id == entry.id)
+            )
+        ).scalar_one_or_none()
+        post = (
+            await session.execute(select(TelegramPost).where(TelegramPost.id == post_id))
+        ).scalar_one_or_none()
+        if taxonomy_job and post and taxonomy_job.text_sha256 == text_sha256(post.text) and taxonomy_job.status in {"complete", "media_only"}:
+            stage = PIPELINE_STAGE_SORTED
+            status = "taxonomy_no_text" if taxonomy_job.status == "media_only" else (
+                "taxonomy_review" if (taxonomy_job.result or {}).get("review_status") == "needs_review" else "taxonomy_sorted"
+            )
     now = datetime.now(timezone.utc)
     values: dict[str, Any] = {
         "content_item_id": item.id if item else None,

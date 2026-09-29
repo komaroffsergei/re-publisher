@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 import typer
@@ -81,8 +82,10 @@ from app.models import (
     Showcase,
     TelegramChat,
     TelegramPost,
+    TaxonomyClassification,
     YandexGenreClassification,
 )
+from app.taxonomy.jobs import enqueue as enqueue_taxonomy, public_job
 
 web_cli = typer.Typer(no_args_is_help=True)
 security = HTTPBasic(auto_error=False)
@@ -530,6 +533,7 @@ def entry_error_text(entry: PipelineEntry, state: ContentPipelineState | None = 
 def active_sql_condition(active_ids: set[int]):
     conditions: list[Any] = [
         PipelineEntry.status == "rewrite_running",
+        TaxonomyClassification.status.in_(("queued", "running")),
         select(RewriteAttempt.id)
         .where(RewriteAttempt.pipeline_entry_id == PipelineEntry.id, RewriteAttempt.status == "running")
         .exists(),
@@ -556,13 +560,21 @@ async def board_state_for_entries(app: FastAPI, session, entry_ids: list[int]) -
     rows = list(
         (
             await session.execute(
-                select(PipelineEntry, ContentPipelineState)
+                select(PipelineEntry, ContentPipelineState, TelegramPost)
                 .outerjoin(ContentPipelineState, ContentPipelineState.post_id == PipelineEntry.source_post_id)
+                .join(TelegramPost, TelegramPost.id == PipelineEntry.source_post_id)
                 .where(PipelineEntry.id.in_(entry_ids))
             )
         ).all()
     )
-    entries = {entry.id: (entry, state) for entry, state in rows}
+    entries = {entry.id: (entry, state, post) for entry, state, post in rows}
+    taxonomy_jobs = {
+        job.pipeline_entry_id: job for job in (
+            await session.execute(
+                select(TaxonomyClassification).where(TaxonomyClassification.pipeline_entry_id.in_(entry_ids))
+            )
+        ).scalars()
+    }
     attempts: dict[int, RewriteAttempt] = {}
     attempt_rows = list(
         (
@@ -581,7 +593,8 @@ async def board_state_for_entries(app: FastAPI, session, entry_ids: list[int]) -
         pair = entries.get(entry_id)
         if pair is None:
             continue
-        entry, content_state = pair
+        entry, content_state, post = pair
+        taxonomy = public_job(taxonomy_jobs.get(entry_id), post.text or "")
         active = False
         active_kind: str | None = None
         phase: str | None = None
@@ -590,7 +603,13 @@ async def board_state_for_entries(app: FastAPI, session, entry_ids: list[int]) -
         last_error = entry_error_text(entry, content_state)
 
         run_state = pipeline_run_payload_if_known(app, entry_id)
-        if run_state and run_state.get("running"):
+        if taxonomy and taxonomy["status"] in {"queued", "running"}:
+            active = True
+            active_kind = "taxonomy"
+            phase = taxonomy["status"]
+            label = "В очереди на сортировку" if phase == "queued" else "Определяю категории"
+            progress = 10 if phase == "queued" else 60
+        elif run_state and run_state.get("running"):
             active = True
             active_kind = "targeted_pipeline"
             phase = str(run_state.get("phase") or "pipeline")
@@ -630,6 +649,7 @@ async def board_state_for_entries(app: FastAPI, session, entry_ids: list[int]) -
             "status": entry.status,
             "last_operation_at": iso_datetime(entry.last_operation_at),
             "updated_at": iso_datetime(entry.updated_at),
+            "taxonomy": taxonomy,
         }
     return payloads
 
@@ -1449,6 +1469,7 @@ def register_routes(app: FastAPI) -> None:
                 .outerjoin(PublicationDraft, PublicationDraft.id == PipelineEntry.latest_draft_id)
                 .outerjoin(PublishedPost, PublishedPost.id == PipelineEntry.published_post_id)
                 .outerjoin(ContentPipelineState, ContentPipelineState.post_id == PipelineEntry.source_post_id)
+                .outerjoin(TaxonomyClassification, TaxonomyClassification.pipeline_entry_id == PipelineEntry.id)
             )
 
         def count_statement():
@@ -1462,6 +1483,7 @@ def register_routes(app: FastAPI) -> None:
                 .outerjoin(PublicationDraft, PublicationDraft.id == PipelineEntry.latest_draft_id)
                 .outerjoin(PublishedPost, PublishedPost.id == PipelineEntry.published_post_id)
                 .outerjoin(ContentPipelineState, ContentPipelineState.post_id == PipelineEntry.source_post_id)
+                .outerjoin(TaxonomyClassification, TaxonomyClassification.pipeline_entry_id == PipelineEntry.id)
             )
 
         def search_condition(pattern: str):
@@ -1589,6 +1611,7 @@ def register_routes(app: FastAPI) -> None:
                 "stage_labels": PIPELINE_STAGE_LABELS,
                 "stages": PIPELINE_STAGES,
                 "processing_enabled": settings.enable_processing,
+                "taxonomy_enabled": settings.taxonomy_enabled,
                 "sort_options": sort_options,
                 "ready_status": READY_DRAFT_STATUS,
                 "active_states": active_states,
@@ -1776,6 +1799,20 @@ def register_routes(app: FastAPI) -> None:
             "updated_at": now_moscow_iso(),
             "entries": {str(entry_id): state for entry_id, state in entries.items()},
         }
+
+    @app.post("/api/pipeline/{entry_id}/taxonomy", dependencies=[auth])
+    async def pipeline_taxonomy(request: Request, entry_id: int):
+        if not request.app.state.settings.taxonomy_enabled:
+            raise HTTPException(409, detail="Сортировка отключена")
+        origin = request.headers.get("origin")
+        if origin and urlsplit(origin).hostname != request.headers.get("host", "").split(":")[0]:
+            raise HTTPException(403, detail="Неверный источник запроса")
+        if request.headers.get("content-type", "").split(";")[0].strip() != "application/json":
+            raise HTTPException(415, detail="Нужен application/json")
+        async with session_factory(request)() as session:
+            job = await enqueue_taxonomy(session, entry_id)
+            await session.commit()
+            return public_job(job)
 
     @app.get("/api/pipeline/{entry_id}/pipeline-status", dependencies=[auth])
     async def pipeline_status(request: Request, entry_id: int):

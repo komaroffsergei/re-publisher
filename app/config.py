@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     classifier_high_confidence: float = Field(default=0.90, validation_alias="CLASSIFIER_HIGH_CONFIDENCE")
     allow_pseudo_labels: bool = Field(default=False, validation_alias="ALLOW_PSEUDO_LABELS")
     auto_accept_codex_labels: bool = Field(default=False, validation_alias="AUTO_ACCEPT_CODEX_LABELS")
+    taxonomy_enabled: bool = Field(default=False, validation_alias="TAXONOMY_ENABLED")
+    taxonomy_model_dir: str = Field(default="./models/max-taxonomy-20260929", validation_alias="TAXONOMY_MODEL_DIR")
 
     summary_backend: str = Field(default="extractive_fallback", validation_alias="SUMMARY_BACKEND")
     summary_model_name: str = Field(default="cointegrated/rut5-base-absum", validation_alias="SUMMARY_MODEL_NAME")

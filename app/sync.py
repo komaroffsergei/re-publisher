@@ -362,6 +362,8 @@ async def save_message(
     )
     post_id, inserted = await upsert_post(session, post_data)
     await ensure_pipeline_entry_for_post(session, post_id)
+    from app.taxonomy.jobs import invalidate_if_edited
+    await invalidate_if_edited(session, post_id, post_data.get("text"))
     if update_state:
         await update_sync_state(session, chat.peer_id, message.id)
     if collect_comments:

@@ -43,6 +43,23 @@ services:
       retries: 3
       start_period: 30s
 
+  taxonomy-worker:
+    <<: *app
+    command: [python, -m, app.taxonomy.worker]
+    networks: [backend]
+    volumes:
+      - ./models:/app/models:ro
+    mem_limit: 768m
+    cpus: 1.0
+    read_only: true
+    tmpfs: [/tmp]
+    healthcheck:
+      test: [CMD, python, -c, "import os,time;assert time.time()-os.path.getmtime('/tmp/taxonomy-worker-heartbeat')<45"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
 networks:
   backend: {external: true, name: portfolio-backend}
   edge: {external: true, name: portfolio-edge}

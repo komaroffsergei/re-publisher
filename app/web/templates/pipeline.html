@@ -7,7 +7,7 @@
     {% if processing_enabled %}
       <p class="muted">Полный цикл поста: получение из TG, сортировка, обогащение, рерайт, готовность и публикация.</p>
     {% else %}
-      <p class="muted">Сообщения из папки MAX. Обработка и публикация сейчас отключены.</p>
+      <p class="muted">Сообщения из папки MAX. {% if taxonomy_enabled %}Стрелка запускает только экспериментальную сортировку выбранного поста; рерайт и публикация отключены.{% else %}Обработка и публикация сейчас отключены.{% endif %}</p>
     {% endif %}
   </div>
   {% if processing_enabled %}
@@ -123,15 +123,14 @@
           {% endif %}
           {% set preview = post.text or (item.main_text if item else "") or "" %}
           {% set title = (item.translated_title if item and item.translated_title else (item.title if item and item.title else preview.split('\n')[0])) or "Без заголовка" %}
-          <a
+          <div
             class="kanban-card {% if is_active %}is-active{% endif %} {% if board_state.get('last_error') %}has-error{% endif %} {% if published %}is-published{% endif %} {% if not entry.publication_allowed %}is-blocked{% endif %}"
-            href="/pipeline/{{ entry.id }}"
             data-entry-id="{{ entry.id }}"
             data-original-order="{{ loop.index0 }}"
             data-active="{{ 'true' if is_active else 'false' }}"
             data-stage="{{ entry.stage }}"
             data-status="{{ entry.status }}"
-            aria-label="Открыть карточку #{{ entry.id }}: {{ title }}. Стадия {{ column.label }}. Статус {{ entry.status }}"
+            aria-label="Карточка #{{ entry.id }}: {{ title }}. Стадия {{ column.label }}. Статус {{ entry.status }}"
           >
             <div
               class="kanban-card-markers"
@@ -154,8 +153,11 @@
             <div class="kanban-card-top">
               <strong>#{{ entry.id }}</strong>
               <span class="status">post {{ entry.source_post_id }}</span>
+              {% if taxonomy_enabled and column.stage in ('received', 'sorted') %}
+                <button class="taxonomy-run" type="button" data-taxonomy-run aria-label="Определить категории поста #{{ entry.id }}" title="Определить категории" {% if (board_state.get('taxonomy') or {}).get('status') in ('queued', 'running') %}disabled{% endif %}>→</button>
+              {% endif %}
             </div>
-            <h3>{{ title }}</h3>
+            <a class="kanban-card-link" href="/pipeline/{{ entry.id }}"><h3>{{ title }}</h3></a>
             <div class="kanban-meta" title="Чат: {{ chat.title if chat else post.chat_peer_id }}&#10;Дата поста: {{ post.date or 'нет' }}&#10;Получен: {{ post.created_at }}&#10;Последняя операция: {{ entry.last_operation_at }}">
               <span>{{ chat.title if chat else post.chat_peer_id }}</span>
               <span>{{ post.date or "без даты" }}</span>
@@ -184,7 +186,10 @@
               <span class="pill">событие {{ entry.event_score if entry.event_score is not none else "?" }}</span>
             </div>
             {% endif %}
-          </a>
+            {% if taxonomy_enabled and column.stage in ('received', 'sorted') %}
+              <div class="taxonomy-result" data-taxonomy-result aria-live="polite"></div>
+            {% endif %}
+          </div>
         {% else %}
           <p class="muted kanban-empty">Записей нет.</p>
         {% endfor %}
@@ -225,6 +230,74 @@
     badge.classList.toggle("is-updated", mode === "updated");
   }
 
+  function taxonomyLine(parent, name, score, kind = "") {
+    const line = document.createElement("div");
+    line.className = `taxonomy-score ${kind} ${score >= 0.65 ? "high" : score >= 0.4 ? "mid" : "low"}`;
+    const label = document.createElement("span");
+    label.textContent = name;
+    const value = document.createElement("strong");
+    value.textContent = `${Math.round(score * 100)}%`;
+    line.append(label, value);
+    parent.append(line);
+  }
+
+  function renderTaxonomy(card, taxonomy) {
+    const node = card.querySelector("[data-taxonomy-result]");
+    const button = card.querySelector("[data-taxonomy-run]");
+    if (button) button.disabled = Boolean(taxonomy && ["queued", "running"].includes(taxonomy.status));
+    if (!node) return;
+    node.replaceChildren();
+    if (!taxonomy) return;
+    const status = taxonomy.status;
+    if (["queued", "running", "failed", "stale"].includes(status)) {
+      const message = document.createElement("p");
+      message.className = `taxonomy-message ${status === "failed" ? "is-error" : ""}`;
+      message.textContent = {
+        queued: "В очереди на сортировку",
+        running: "Определяю категории…",
+        failed: taxonomy.error || "Ошибка модели; можно повторить",
+        stale: "Текст изменился. Запустите сортировку ещё раз.",
+      }[status];
+      node.append(message);
+      return;
+    }
+    const result = taxonomy.result;
+    if (!result) return;
+    const info = document.createElement("p");
+    info.className = "taxonomy-info";
+    const duration = taxonomy.elapsed_ms === null ? "" : ` · ${taxonomy.elapsed_ms} мс`;
+    info.textContent = status === "media_only"
+      ? "Нет текста для смысловой классификации"
+      : `Оценки модели, не вероятность · ${taxonomy.model_version || "модель"}${duration}`;
+    node.append(info);
+    if (status === "media_only") return;
+    if (result.review_status === "needs_review") {
+      const warning = document.createElement("p");
+      warning.className = "taxonomy-message is-warning";
+      warning.textContent = "Не уверен: лучше проверить вручную";
+      node.append(warning);
+    }
+    for (const category of result.top_3 || []) {
+      const group = document.createElement("div");
+      group.className = "taxonomy-group";
+      taxonomyLine(group, category.name, category.score, "broad");
+      for (const child of category.subcategories || []) {
+        taxonomyLine(group, child.name, child.score, "sub");
+      }
+      node.append(group);
+    }
+    const features = document.createElement("div");
+    features.className = "taxonomy-features";
+    for (const feature of result.features || []) {
+      taxonomyLine(features, feature.name, feature.score, "feature");
+    }
+    node.append(features);
+    const complexity = document.createElement("p");
+    complexity.className = "taxonomy-complexity";
+    complexity.textContent = `Техническая сложность: ${result.technical_complexity ?? "?"}/5`;
+    node.append(complexity);
+  }
+
   function applyActiveOnly(card) {
     const column = card.closest(".kanban-column");
     if (!column) return;
@@ -259,6 +332,7 @@
     card.classList.toggle("is-active", active);
     card.classList.toggle("has-error", hasError && !active);
     card.style.order = active ? "-1000" : card.dataset.originalOrder || "0";
+    renderTaxonomy(card, state.taxonomy);
 
     if (active) {
       const progress = state.progress === null || state.progress === undefined ? "" : ` · ${state.progress}%`;
@@ -306,6 +380,30 @@
   }
 
   cards.forEach((card) => applyActiveOnly(card));
+  cards.forEach((card) => {
+    const button = card.querySelector("[data-taxonomy-run]");
+    if (!button) return;
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      try {
+        const response = await fetch(`/api/pipeline/${encodeURIComponent(card.dataset.entryId)}/taxonomy`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json", "Accept": "application/json"},
+          body: "{}",
+          credentials: "same-origin",
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          throw new Error(typeof payload.detail === "string" ? payload.detail : "Не удалось поставить в очередь");
+        }
+        await pollBoardState();
+      } catch (error) {
+        button.disabled = false;
+        const node = card.querySelector("[data-taxonomy-result]");
+        if (node) node.textContent = error.message || "Ошибка запроса";
+      }
+    });
+  });
   updateColumnCounts();
   pollBoardState();
   window.setInterval(pollBoardState, 2500);
