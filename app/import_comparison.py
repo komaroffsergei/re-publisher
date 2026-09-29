@@ -85,7 +85,7 @@ async def main() -> None:
                 row = (await session.execute(select(TelegramPost.id, TelegramPost.text).where(
                     TelegramPost.chat_peer_id == chat.peer_id,
                     TelegramPost.message_id == message.id,
-                ))).scalar_one_or_none()
+                ))).first()
                 if row is not None:
                     expected_hash = selected[chat.peer_id][message.id]["text_sha256"]
                     if hashlib.sha256((row[1] or "").encode("utf-8")).hexdigest() != expected_hash:
