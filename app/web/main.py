@@ -1658,8 +1658,9 @@ def register_routes(app: FastAPI) -> None:
             source_media = source_media_items(album_posts, request.app.state.settings.media_dir)
             link_materials = await load_link_materials(session, entry.source_post_id)
             media_assets = await load_media_assets_for_post(session, entry.source_post_id, link_materials)
-            if source_media:
-                media_assets = [asset for asset in media_assets if asset.source_type != "telegram_media"]
+            visible_source_ids = {media["post_id"] for media in source_media if media["url"]}
+            media_assets = [asset for asset in media_assets
+                            if not (asset.source_type == "telegram_media" and asset.source_post_id in visible_source_ids)]
             post_segments = telegram_link_segments(post.text, post.raw)
             link_rows = []
             for material in link_materials:
