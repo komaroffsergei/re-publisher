@@ -3,11 +3,25 @@
 {% set entry = row[0] %}{% set item = row[1] %}{% set post = row[2] %}{% set chat = row[3] %}{% set classification = row[4] %}{% set draft = row[5] %}{% set published = row[6] %}
 <section class="toolbar">
   <div>
-    <h1>{{ (item.translated_title if item and item.translated_title else (item.title if item and item.title else ((post.text or "").split('\n')[0]))) or "Запись конвейера" }}</h1>
+    {% if album_size > 1 and not (post.text or '').strip() %}
+      <h1>Часть альбома Telegram · сообщение #{{ post.message_id }}</h1>
+    {% else %}
+      <h1>{{ (item.translated_title if item and item.translated_title else (item.title if item and item.title else ((post.text or "").split('\n')[0]))) or "Запись конвейера" }}</h1>
+    {% endif %}
     <p class="muted">entry #{{ entry.id }} · post {{ entry.source_post_id }} · {{ chat.title if chat else post.chat_peer_id }}</p>
   </div>
   <a class="button" href="/pipeline">Назад</a>
 </section>
+
+{% if album_size > 1 %}
+<article class="album-notice">
+  <strong>Альбом Telegram · {{ album_size }} отдельных сообщений</strong>
+  <p>Telegram открывает их как один пост. Здесь показаны все вложения альбома; текущая часть — сообщение #{{ post.message_id }}.</p>
+  {% if album_primary_entry_id != entry.id %}
+    <a href="/pipeline/{{ album_primary_entry_id }}">Карточка с текстом альбома #{{ album_primary_entry_id }} →</a>
+  {% endif %}
+</article>
+{% endif %}
 
 {% if taxonomy_enabled %}
 {% set taxonomies = taxonomy_state.get('taxonomies') or {} %}
@@ -145,6 +159,28 @@
     {% endif %}
   </article>
 </section>
+
+{% if source_media %}
+<article>
+  <h2>{{ 'Медиа альбома' if album_size > 1 else 'Медиа Telegram' }}</h2>
+  <div class="media-grid">
+    {% for media in source_media %}
+      <figure class="media-thumb">
+        {% if media.url and media.kind == 'image' %}
+          <a href="{{ media.url }}" target="_blank" rel="noopener noreferrer"><img src="{{ media.url }}" alt="Вложение Telegram #{{ media.message_id }}" loading="lazy"></a>
+        {% elif media.url and media.kind == 'video' %}
+          <video src="{{ media.url }}" controls preload="metadata"></video>
+        {% elif media.url %}
+          <a href="{{ media.url }}">Скачать {{ media.filename }}</a>
+        {% else %}
+          <p class="muted">Файл недоступен: {{ media.status }}</p>
+        {% endif %}
+        <figcaption>Сообщение #{{ media.message_id }}{% if media.filename %} · {{ media.filename }}{% endif %}</figcaption>
+      </figure>
+    {% endfor %}
+  </div>
+</article>
+{% endif %}
 
 {% if media_assets %}
 <article>

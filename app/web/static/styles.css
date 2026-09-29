@@ -518,6 +518,11 @@ dd { margin: 0; overflow-wrap: anywhere; }
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 12px;
 }
+.album-notice {
+  border-left: 4px solid #e49b24;
+  background: #fff7e9;
+}
+.album-notice p { margin: 8px 0; }
 .media-thumb {
   margin: 0;
   border: 1px solid #d9dee7;

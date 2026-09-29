@@ -55,6 +55,7 @@ from app.content.prompt_versions import (
 from app.content.topic_audit import latest_topic_audit_summary, report_root
 from app.content.yandex_genre_classifier import usage_total_tokens
 from app.content.search import build_search_statement
+from app.web.source_media import album_primary, downloaded_media_path, source_media_items
 from app.content.url_extractor import extract_post_links
 from app.db import create_engine, create_session_factory
 from app.logging_setup import setup_logging
@@ -1639,8 +1640,26 @@ def register_routes(app: FastAPI) -> None:
             if row is None:
                 raise HTTPException(404)
             entry, _item, post, _chat, _classification, _draft, _published = row
+            album_posts = [post]
+            if post.grouped_id is not None:
+                album_posts = list((await session.execute(
+                    select(TelegramPost)
+                    .where(TelegramPost.chat_peer_id == post.chat_peer_id,
+                           TelegramPost.grouped_id == post.grouped_id,
+                           TelegramPost.is_deleted.is_(False))
+                    .order_by(TelegramPost.message_id)
+                )).scalars()) or [post]
+            primary_post = album_primary(album_posts)
+            primary_entry_id = entry.id
+            if primary_post.id != post.id:
+                primary_entry_id = (await session.execute(
+                    select(PipelineEntry.id).where(PipelineEntry.source_post_id == primary_post.id)
+                )).scalar_one_or_none() or entry.id
+            source_media = source_media_items(album_posts, request.app.state.settings.media_dir)
             link_materials = await load_link_materials(session, entry.source_post_id)
             media_assets = await load_media_assets_for_post(session, entry.source_post_id, link_materials)
+            if source_media:
+                media_assets = [asset for asset in media_assets if asset.source_type != "telegram_media"]
             post_segments = telegram_link_segments(post.text, post.raw)
             link_rows = []
             for material in link_materials:
@@ -1681,7 +1700,7 @@ def register_routes(app: FastAPI) -> None:
             draft_display_body = strip_link_materials_section(draft.body if draft else None)
             draft_segments = markdown_link_segments(draft_display_body)
             rewrite_status = rewrite_status_payload(_entry, draft, attempts)
-            source_post_url = telegram_post_source_url(post, row[3])
+            source_post_url = telegram_post_source_url(primary_post, row[3])
             taxonomy_state = (await board_state_for_entries(request.app, session, [entry_id])).get(entry_id, {})
         return templates.TemplateResponse(
             request,
@@ -1694,6 +1713,9 @@ def register_routes(app: FastAPI) -> None:
                 "draft_display_body": draft_display_body,
                 "link_rows": link_rows,
                 "media_assets": media_assets,
+                "source_media": source_media,
+                "album_size": len(album_posts) if post.grouped_id is not None else 0,
+                "album_primary_entry_id": primary_entry_id,
                 "rewrite_status": rewrite_status,
                 "source_post_url": source_post_url,
                 "processing_enabled": request.app.state.settings.enable_processing,
@@ -2005,6 +2027,26 @@ def register_routes(app: FastAPI) -> None:
         async with session_factory(request)() as session:
             result = await session.execute(build_search_statement(q=q, label=label).limit(50))
             return templates.TemplateResponse(request, "search.html", {"rows": list(result.scalars()), "q": q or "", "label": label or ""})
+
+    @app.get("/source-media/{post_id}", dependencies=[auth])
+    async def source_media_file(request: Request, post_id: int):
+        settings: Settings = request.app.state.settings
+        async with session_factory(request)() as session:
+            post = (await session.execute(select(TelegramPost).where(TelegramPost.id == post_id))).scalar_one_or_none()
+        if post is None:
+            raise HTTPException(404)
+        path = downloaded_media_path(post, settings.media_dir)
+        if path is None:
+            raise HTTPException(404)
+        item = source_media_items([post], settings.media_dir)[0]
+        inline = item["kind"] in {"image", "video"}
+        return FileResponse(
+            path,
+            media_type=item["mime_type"] if inline else "application/octet-stream",
+            filename=path.name,
+            content_disposition_type="inline" if inline else "attachment",
+            headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=3600"},
+        )
 
     @app.get("/media/{asset_id}", dependencies=[auth])
     async def media_file(request: Request, asset_id: int):
