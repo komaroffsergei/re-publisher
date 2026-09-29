@@ -46,6 +46,8 @@ services:
   taxonomy-worker:
     <<: *app
     command: [python, -m, app.taxonomy.worker]
+    environment:
+      TAXONOMY_WORKER_MODEL: tfidf
     networks: [backend]
     volumes:
       - ./models:/app/models:ro
@@ -59,6 +61,29 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+
+  taxonomy-worker-minilm:
+    <<: *app
+    image: ${PUBLISHER_MINILM_IMAGE:?PUBLISHER_MINILM_IMAGE is required}
+    command: [python, -m, app.taxonomy.worker]
+    environment:
+      TAXONOMY_WORKER_MODEL: minilm
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      OMP_NUM_THREADS: "1"
+    networks: [backend]
+    volumes:
+      - ./models:/app/models:ro
+    mem_limit: 2048m
+    cpus: 1.0
+    read_only: true
+    tmpfs: [/tmp]
+    healthcheck:
+      test: [CMD, python, -c, "import os,time;assert time.time()-os.path.getmtime('/tmp/taxonomy-worker-heartbeat')<45"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
 
 networks:
   backend: {external: true, name: portfolio-backend}

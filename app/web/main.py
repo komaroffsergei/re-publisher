@@ -533,7 +533,10 @@ def entry_error_text(entry: PipelineEntry, state: ContentPipelineState | None = 
 def active_sql_condition(active_ids: set[int]):
     conditions: list[Any] = [
         PipelineEntry.status == "rewrite_running",
-        TaxonomyClassification.status.in_(("queued", "running")),
+        select(TaxonomyClassification.id)
+        .where(TaxonomyClassification.pipeline_entry_id == PipelineEntry.id,
+               TaxonomyClassification.status.in_(("queued", "running")))
+        .exists(),
         select(RewriteAttempt.id)
         .where(RewriteAttempt.pipeline_entry_id == PipelineEntry.id, RewriteAttempt.status == "running")
         .exists(),
@@ -568,13 +571,13 @@ async def board_state_for_entries(app: FastAPI, session, entry_ids: list[int]) -
         ).all()
     )
     entries = {entry.id: (entry, state, post) for entry, state, post in rows}
-    taxonomy_jobs = {
-        job.pipeline_entry_id: job for job in (
+    taxonomy_jobs: dict[int, dict[str, TaxonomyClassification]] = {}
+    for job in (
             await session.execute(
                 select(TaxonomyClassification).where(TaxonomyClassification.pipeline_entry_id.in_(entry_ids))
             )
-        ).scalars()
-    }
+        ).scalars():
+        taxonomy_jobs.setdefault(job.pipeline_entry_id, {})[job.model_key] = job
     attempts: dict[int, RewriteAttempt] = {}
     attempt_rows = list(
         (
@@ -594,7 +597,8 @@ async def board_state_for_entries(app: FastAPI, session, entry_ids: list[int]) -
         if pair is None:
             continue
         entry, content_state, post = pair
-        taxonomy = public_job(taxonomy_jobs.get(entry_id), post.text or "")
+        taxonomies = {key: public_job(job, post.text or "") for key, job in taxonomy_jobs.get(entry_id, {}).items()}
+        taxonomy = next((job for job in taxonomies.values() if job and job["status"] in {"queued", "running"}), None)
         active = False
         active_kind: str | None = None
         phase: str | None = None
@@ -649,7 +653,7 @@ async def board_state_for_entries(app: FastAPI, session, entry_ids: list[int]) -
             "status": entry.status,
             "last_operation_at": iso_datetime(entry.last_operation_at),
             "updated_at": iso_datetime(entry.updated_at),
-            "taxonomy": taxonomy,
+            "taxonomies": taxonomies,
         }
     return payloads
 
@@ -1469,7 +1473,6 @@ def register_routes(app: FastAPI) -> None:
                 .outerjoin(PublicationDraft, PublicationDraft.id == PipelineEntry.latest_draft_id)
                 .outerjoin(PublishedPost, PublishedPost.id == PipelineEntry.published_post_id)
                 .outerjoin(ContentPipelineState, ContentPipelineState.post_id == PipelineEntry.source_post_id)
-                .outerjoin(TaxonomyClassification, TaxonomyClassification.pipeline_entry_id == PipelineEntry.id)
             )
 
         def count_statement():
@@ -1483,7 +1486,6 @@ def register_routes(app: FastAPI) -> None:
                 .outerjoin(PublicationDraft, PublicationDraft.id == PipelineEntry.latest_draft_id)
                 .outerjoin(PublishedPost, PublishedPost.id == PipelineEntry.published_post_id)
                 .outerjoin(ContentPipelineState, ContentPipelineState.post_id == PipelineEntry.source_post_id)
-                .outerjoin(TaxonomyClassification, TaxonomyClassification.pipeline_entry_id == PipelineEntry.id)
             )
 
         def search_condition(pattern: str):
@@ -1679,6 +1681,7 @@ def register_routes(app: FastAPI) -> None:
             draft_segments = markdown_link_segments(draft_display_body)
             rewrite_status = rewrite_status_payload(_entry, draft, attempts)
             source_post_url = telegram_post_source_url(post, row[3])
+            taxonomy_state = (await board_state_for_entries(request.app, session, [entry_id])).get(entry_id, {})
         return templates.TemplateResponse(
             request,
             "pipeline_detail.html",
@@ -1693,6 +1696,8 @@ def register_routes(app: FastAPI) -> None:
                 "rewrite_status": rewrite_status,
                 "source_post_url": source_post_url,
                 "processing_enabled": request.app.state.settings.enable_processing,
+                "taxonomy_enabled": request.app.state.settings.taxonomy_enabled,
+                "taxonomy_state": taxonomy_state,
             },
         )
 
@@ -1800,8 +1805,9 @@ def register_routes(app: FastAPI) -> None:
             "entries": {str(entry_id): state for entry_id, state in entries.items()},
         }
 
+    @app.post("/api/pipeline/{entry_id}/taxonomy/{model_key}", dependencies=[auth])
     @app.post("/api/pipeline/{entry_id}/taxonomy", dependencies=[auth])
-    async def pipeline_taxonomy(request: Request, entry_id: int):
+    async def pipeline_taxonomy(request: Request, entry_id: int, model_key: str = "tfidf"):
         if not request.app.state.settings.taxonomy_enabled:
             raise HTTPException(409, detail="Сортировка отключена")
         origin = request.headers.get("origin")
@@ -1810,7 +1816,7 @@ def register_routes(app: FastAPI) -> None:
         if request.headers.get("content-type", "").split(";")[0].strip() != "application/json":
             raise HTTPException(415, detail="Нужен application/json")
         async with session_factory(request)() as session:
-            job = await enqueue_taxonomy(session, entry_id)
+            job = await enqueue_taxonomy(session, entry_id, model_key)
             await session.commit()
             return public_job(job)
 

@@ -9,6 +9,77 @@
   <a class="button" href="/pipeline">Назад</a>
 </section>
 
+{% if taxonomy_enabled %}
+{% set taxonomies = taxonomy_state.get('taxonomies') or {} %}
+<article id="taxonomy-detail" data-entry-id="{{ entry.id }}">
+  <h2>Сортировка поста</h2>
+  {% if not (post.text or '').strip() %}
+    <p><strong>{{ 'Только медиа' if post.media_type or post.media_path else 'Пустое сообщение' }}</strong> · текста для смысловой модели нет, карточка уже в «Отсортирован».</p>
+  {% else %}
+    <div class="taxonomy-actions">
+      <button class="taxonomy-run" type="button" data-taxonomy-detail-run="minilm" {% if taxonomy_state.get('active_kind') == 'taxonomy' %}disabled{% endif %}>→ <small>MiniLM</small></button>
+      <button class="taxonomy-run taxonomy-run-baseline" type="button" data-taxonomy-detail-run="tfidf" {% if taxonomy_state.get('active_kind') == 'taxonomy' %}disabled{% endif %}>→ <small>TF-IDF</small></button>
+    </div>
+    <p class="muted">Модели запускаются отдельно. Оценки не откалиброваны и могут расходиться.</p>
+    <p id="taxonomy-detail-feedback" aria-live="polite"></p>
+    {% for model_key, model_name in [('minilm', 'MiniLM'), ('tfidf', 'TF-IDF')] %}
+      {% set job = taxonomies.get(model_key) %}
+      {% if job %}
+        <section class="taxonomy-model-result">
+          <h3>{{ model_name }} · {{ job.status }}{% if job.elapsed_ms is not none %} · {{ job.elapsed_ms }} мс{% endif %}</h3>
+          {% if job.error %}<p class="error">{{ job.error }}</p>{% endif %}
+          {% if job.result %}
+            <p class="muted">{{ job.model_version }} · оценки модели, не вероятность</p>
+            {% for category in job.result.top_3 %}
+              <p><strong>{{ category.name }} {{ (category.score * 100)|round|int }}%</strong> · {% for child in category.subcategories %}{{ child.name }} {{ (child.score * 100)|round|int }}%{% if not loop.last %}, {% endif %}{% endfor %}</p>
+            {% endfor %}
+            <p>Признаки: {% for feature in job.result.features %}{{ feature.name }} {{ (feature.score * 100)|round|int }}%{% if not loop.last %}, {% endif %}{% endfor %}</p>
+            <p>Техническая сложность: {{ job.result.technical_complexity }}/5</p>
+          {% endif %}
+        </section>
+      {% endif %}
+    {% endfor %}
+  {% endif %}
+</article>
+<script>
+(() => {
+  const section = document.getElementById('taxonomy-detail');
+  const buttons = section?.querySelectorAll('[data-taxonomy-detail-run]');
+  if (!buttons?.length) return;
+  const feedback = document.getElementById('taxonomy-detail-feedback');
+  let requested = null;
+  async function refresh() {
+    if (!requested) return;
+    const response = await fetch(`/api/pipeline/board-state?entry_ids=${section.dataset.entryId}`, {cache: 'no-store'});
+    if (!response.ok) return;
+    const state = (await response.json()).entries?.[section.dataset.entryId];
+    const job = state?.taxonomies?.[requested];
+    if (!job) return;
+    feedback.textContent = job.status === 'queued' ? 'В очереди…' : job.status === 'running' ? 'Модель работает…' : '';
+    if (!['queued', 'running'].includes(job.status)) location.reload();
+  }
+  buttons.forEach((button) => button.addEventListener('click', async () => {
+    buttons.forEach((item) => { item.disabled = true; });
+    requested = button.dataset.taxonomyDetailRun;
+    feedback.textContent = 'Ставлю в очередь…';
+    try {
+      const response = await fetch(`/api/pipeline/${section.dataset.entryId}/taxonomy/${requested}`, {
+        method: 'POST', headers: {'Content-Type': 'application/json', 'Accept': 'application/json'}, body: '{}'
+      });
+      if (!response.ok) throw new Error((await response.json()).detail || 'Запрос не прошёл');
+      await refresh();
+    } catch (error) {
+      requested = null;
+      buttons.forEach((item) => { item.disabled = false; });
+      feedback.textContent = error.message;
+    }
+  }));
+  setInterval(() => { refresh().catch(() => { feedback.textContent = 'Нет связи с сервером. Обновите страницу.'; }); }, 2500);
+})();
+</script>
+{% endif %}
+
+{% if processing_enabled %}
 <article id="rewrite-status-card" data-entry-id="{{ entry.id }}" class="rewrite-status-card {{ 'is-running' if rewrite_status.is_running else '' }}">
   <div class="item-head">
     <div>
@@ -49,6 +120,7 @@
     </ul>
   </div>
 </article>
+{% endif %}
 
 <section class="grid2">
   <article>

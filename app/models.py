@@ -502,11 +502,13 @@ class PipelineEntry(TimestampMixin, Base):
 
 class TaxonomyClassification(Base):
     __tablename__ = "taxonomy_classifications"
+    __table_args__ = (UniqueConstraint("pipeline_entry_id", "model_key", name="uq_taxonomy_classifications_entry_model"),)
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     pipeline_entry_id: Mapped[int] = mapped_column(
-        ForeignKey("pipeline_entries.id", ondelete="CASCADE"), unique=True, nullable=False
+        ForeignKey("pipeline_entries.id", ondelete="CASCADE"), nullable=False
     )
+    model_key: Mapped[str] = mapped_column(Text, server_default="tfidf", nullable=False)
     source_post_id: Mapped[int] = mapped_column(ForeignKey("telegram_posts.id", ondelete="CASCADE"), nullable=False)
     text_sha256: Mapped[str] = mapped_column(Text, nullable=False)
     model_version: Mapped[str | None] = mapped_column(Text, nullable=True)

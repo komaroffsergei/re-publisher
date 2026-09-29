@@ -21,6 +21,31 @@ FEATURE_NAMES = {
 }
 
 
+def format_result(taxonomy: dict, scores: dict[str, float], complexity: float) -> dict:
+    categories = sorted(taxonomy["categories"], key=lambda category: scores[category["id"]], reverse=True)[:3]
+    top = [
+        {
+            "id": category["id"], "name": category["name"],
+            "score": round(scores[category["id"]], 4),
+            "subcategories": [
+                {"id": child["id"], "name": child["name"], "score": round(scores[child["id"]], 4)}
+                for child in category["subcategories"]
+            ],
+        }
+        for category in categories
+    ]
+    return {
+        "top_3": top,
+        "features": [
+            {"id": name, "name": FEATURE_NAMES[name], "score": round(scores[name], 4)}
+            for name in taxonomy["binary_features"]
+        ],
+        "technical_complexity": int(np.rint(np.clip(complexity, 0, 5))),
+        "review_status": "needs_review" if not top or top[0]["score"] < 0.55 else "scored",
+        "score_kind": "uncalibrated_model_score",
+    }
+
+
 class TaxonomyModel:
     def __init__(self, model_dir: str | Path):
         model_dir = Path(model_dir)
@@ -42,26 +67,5 @@ class TaxonomyModel:
         ]).tocsr()
         scores = {name: float(self.bundle["models"][name].predict_proba(sparse)[0, 1])
                   for name in self.bundle["label_names"]}
-        categories = sorted(self.taxonomy["categories"], key=lambda category: scores[category["id"]], reverse=True)[:3]
-        top = [
-            {
-                "id": category["id"], "name": category["name"],
-                "score": round(scores[category["id"]], 4),
-                "subcategories": [
-                    {"id": child["id"], "name": child["name"], "score": round(scores[child["id"]], 4)}
-                    for child in category["subcategories"]
-                ],
-            }
-            for category in categories
-        ]
         complexity = float(self.bundle["complexity"].predict(sparse)[0])
-        return {
-            "top_3": top,
-            "features": [
-                {"id": name, "name": FEATURE_NAMES[name], "score": round(scores[name], 4)}
-                for name in self.taxonomy["binary_features"]
-            ],
-            "technical_complexity": int(np.rint(np.clip(complexity, 0, 5))),
-            "review_status": "needs_review" if not top or top[0]["score"] < 0.55 else "scored",
-            "score_kind": "uncalibrated_model_score",
-        }
+        return format_result(self.taxonomy, scores, complexity)

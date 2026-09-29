@@ -7,7 +7,7 @@
     {% if processing_enabled %}
       <p class="muted">Полный цикл поста: получение из TG, сортировка, обогащение, рерайт, готовность и публикация.</p>
     {% else %}
-      <p class="muted">Сообщения из папки MAX. {% if taxonomy_enabled %}Стрелка запускает только экспериментальную сортировку выбранного поста; рерайт и публикация отключены.{% else %}Обработка и публикация сейчас отключены.{% endif %}</p>
+      <p class="muted">Сообщения из папки MAX. {% if taxonomy_enabled %}Две стрелки запускают MiniLM и TF-IDF отдельно. Посты без текста сразу уходят в «Отсортирован»; рерайт и публикация отключены.{% else %}Обработка и публикация сейчас отключены.{% endif %}</p>
     {% endif %}
   </div>
   {% if processing_enabled %}
@@ -153,8 +153,11 @@
             <div class="kanban-card-top">
               <strong>#{{ entry.id }}</strong>
               <span class="status">post {{ entry.source_post_id }}</span>
-              {% if taxonomy_enabled and column.stage in ('received', 'sorted') %}
-                <button class="taxonomy-run" type="button" data-taxonomy-run aria-label="Определить категории поста #{{ entry.id }}" title="Определить категории" {% if (board_state.get('taxonomy') or {}).get('status') in ('queued', 'running') %}disabled{% endif %}>→</button>
+              {% if taxonomy_enabled and column.stage in ('received', 'sorted') and (post.text or '').strip() %}
+                <span class="taxonomy-actions">
+                  <button class="taxonomy-run" type="button" data-taxonomy-run="minilm" aria-label="Классифицировать пост #{{ entry.id }} моделью MiniLM" title="Новая модель MiniLM" {% if is_active %}disabled{% endif %}>→ <small>MiniLM</small></button>
+                  <button class="taxonomy-run taxonomy-run-baseline" type="button" data-taxonomy-run="tfidf" aria-label="Классифицировать пост #{{ entry.id }} моделью TF-IDF" title="Контрольная модель TF-IDF" {% if is_active %}disabled{% endif %}>→ <small>TF-IDF</small></button>
+                </span>
               {% endif %}
             </div>
             <a class="kanban-card-link" href="/pipeline/{{ entry.id }}"><h3>{{ title }}</h3></a>
@@ -187,7 +190,7 @@
             </div>
             {% endif %}
             {% if taxonomy_enabled and column.stage in ('received', 'sorted') %}
-              <div class="taxonomy-result" data-taxonomy-result aria-live="polite"></div>
+              <div class="taxonomy-result" data-taxonomy-result aria-live="polite">{% if not (post.text or '').strip() %}{{ 'Только медиа' if post.media_type or post.media_path else 'Пустое сообщение' }}{% endif %}</div>
             {% endif %}
           </div>
         {% else %}
@@ -241,13 +244,33 @@
     parent.append(line);
   }
 
-  function renderTaxonomy(card, taxonomy) {
+  function renderTaxonomy(card, taxonomies) {
     const node = card.querySelector("[data-taxonomy-result]");
-    const button = card.querySelector("[data-taxonomy-run]");
-    if (button) button.disabled = Boolean(taxonomy && ["queued", "running"].includes(taxonomy.status));
+    const busy = Object.values(taxonomies || {}).some((job) => job && ["queued", "running"].includes(job.status));
+    card.querySelectorAll("[data-taxonomy-run]").forEach((button) => { button.disabled = busy; });
     if (!node) return;
     node.replaceChildren();
-    if (!taxonomy) return;
+    const media = (taxonomies || {}).media;
+    if (media && ["media_only", "empty"].includes(media.status)) {
+      const label = document.createElement("strong");
+      label.textContent = media.status === "media_only" ? "Только медиа · модель не запускалась" : "Пустое сообщение · модель не запускалась";
+      node.append(label);
+      return;
+    }
+    for (const [modelKey, modelName] of [["minilm", "MiniLM"], ["tfidf", "TF-IDF"]]) {
+      const taxonomy = (taxonomies || {})[modelKey];
+      if (!taxonomy) continue;
+      const section = document.createElement("section");
+      section.className = "taxonomy-model-result";
+      const heading = document.createElement("h4");
+      heading.textContent = modelName;
+      section.append(heading);
+      renderSingleTaxonomy(section, taxonomy);
+      node.append(section);
+    }
+  }
+
+  function renderSingleTaxonomy(node, taxonomy) {
     const status = taxonomy.status;
     if (["queued", "running", "failed", "stale"].includes(status)) {
       const message = document.createElement("p");
@@ -332,7 +355,7 @@
     card.classList.toggle("is-active", active);
     card.classList.toggle("has-error", hasError && !active);
     card.style.order = active ? "-1000" : card.dataset.originalOrder || "0";
-    renderTaxonomy(card, state.taxonomy);
+    renderTaxonomy(card, state.taxonomies);
 
     if (active) {
       const progress = state.progress === null || state.progress === undefined ? "" : ` · ${state.progress}%`;
@@ -381,12 +404,13 @@
 
   cards.forEach((card) => applyActiveOnly(card));
   cards.forEach((card) => {
-    const button = card.querySelector("[data-taxonomy-run]");
-    if (!button) return;
+    const buttons = card.querySelectorAll("[data-taxonomy-run]");
+    if (!buttons.length) return;
+    buttons.forEach((button) => {
     button.addEventListener("click", async () => {
-      button.disabled = true;
+      buttons.forEach((item) => { item.disabled = true; });
       try {
-        const response = await fetch(`/api/pipeline/${encodeURIComponent(card.dataset.entryId)}/taxonomy`, {
+        const response = await fetch(`/api/pipeline/${encodeURIComponent(card.dataset.entryId)}/taxonomy/${encodeURIComponent(button.dataset.taxonomyRun)}`, {
           method: "POST",
           headers: {"Content-Type": "application/json", "Accept": "application/json"},
           body: "{}",
@@ -398,10 +422,11 @@
         }
         await pollBoardState();
       } catch (error) {
-        button.disabled = false;
+        buttons.forEach((item) => { item.disabled = false; });
         const node = card.querySelector("[data-taxonomy-result]");
         if (node) node.textContent = error.message || "Ошибка запроса";
       }
+    });
     });
   });
   updateColumnCounts();

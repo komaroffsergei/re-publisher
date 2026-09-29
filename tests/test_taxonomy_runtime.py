@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
 from scipy.sparse import csr_matrix
 
 from app.taxonomy.inference import TaxonomyModel
-from app.taxonomy.jobs import public_job, text_sha256
+from app.taxonomy.jobs import enqueue, mark_without_text, public_job, text_sha256
 
 
 class FakeVectorizer:
@@ -57,6 +58,7 @@ def test_inference_keeps_independent_subcategory_scores_and_all_required_feature
 
 def test_edited_text_hides_outdated_result():
     job = SimpleNamespace(
+        model_key="tfidf",
         text_sha256=text_sha256("старый текст"), status="complete", result={"top_3": [1]},
         error=None, model_version="v1", elapsed_ms=50,
         finished_at=datetime(2026, 9, 29, tzinfo=timezone.utc),
@@ -64,3 +66,39 @@ def test_edited_text_hides_outdated_result():
     assert public_job(job, "новый текст")["status"] == "stale"
     assert public_job(job, "новый текст")["result"] is None
     assert public_job(job, "старый текст")["result"] == {"top_3": [1]}
+
+
+async def test_empty_media_is_sorted_without_queuing_either_model():
+    entry = SimpleNamespace(id=42, stage="received", status="received", last_operation_at=None)
+    post = SimpleNamespace(id=42, text=" \n ", media_type="MessageMediaPhoto", media_path=None, is_deleted=False)
+    chat = SimpleNamespace(folder_name="MAX")
+    session = MagicMock()
+    session.execute = AsyncMock(side_effect=[
+        SimpleNamespace(first=lambda: (entry, post, chat)),
+        SimpleNamespace(scalar_one_or_none=lambda: None),
+    ])
+    session.flush = AsyncMock()
+
+    job = await enqueue(session, 42, "minilm")
+
+    assert job.model_key == "media"
+    assert job.status == "media_only"
+    assert job.result["category"] == "only_media"
+    assert job.attempts is None or job.attempts == 0
+    assert entry.stage == "sorted"
+    assert entry.status == "taxonomy_media_only"
+    assert session.execute.await_count == 2
+
+
+async def test_empty_without_media_is_not_mislabelled_as_media():
+    entry = SimpleNamespace(id=43, stage="received", status="received", last_operation_at=None)
+    post = SimpleNamespace(id=43, text=None, media_type=None, media_path=None)
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))
+    session.flush = AsyncMock()
+
+    job = await mark_without_text(session, entry, post)
+
+    assert job.status == "empty"
+    assert job.result["category"] == "empty"
+    assert entry.stage == "sorted"

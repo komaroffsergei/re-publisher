@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,19 +15,19 @@ from app.config import get_settings
 from app.db import create_engine, create_session_factory
 from app.models import PipelineEntry, TaxonomyClassification, TelegramPost
 from app.taxonomy.inference import TaxonomyModel
-from app.taxonomy.jobs import text_sha256
+from app.taxonomy.jobs import MODEL_VERSIONS, text_sha256
 
 
 logger = logging.getLogger(__name__)
 
 
-async def claim_next(factory) -> int | None:
+async def claim_next(factory, model_key: str) -> int | None:
     async with factory() as session:
         async with session.begin():
             job = (
                 await session.execute(
                     select(TaxonomyClassification)
-                    .where(TaxonomyClassification.status == "queued")
+                    .where(TaxonomyClassification.status == "queued", TaxonomyClassification.model_key == model_key)
                     .order_by(TaxonomyClassification.id)
                     .with_for_update(skip_locked=True)
                     .limit(1)
@@ -66,14 +67,34 @@ async def finish_job(factory, job_id: int, result: dict | None, elapsed_ms: int,
                 job.result = None
                 job.error = None
                 if entry is not None and entry.classification_id is None:
-                    entry.stage = "received"
-                    entry.status = "received"
+                    if post is not None and not (post.text or "").strip() and not post.is_deleted:
+                        entry.stage = "sorted"
+                        entry.status = "taxonomy_media_only" if post.media_type or post.media_path else "taxonomy_empty"
+                    else:
+                        other_complete = (await session.execute(
+                            select(TaxonomyClassification.id).where(
+                                TaxonomyClassification.pipeline_entry_id == entry.id,
+                                TaxonomyClassification.id != job.id,
+                                TaxonomyClassification.status == "complete",
+                                TaxonomyClassification.text_sha256 == text_sha256(post.text if post else None),
+                            ).limit(1)
+                        )).scalar_one_or_none()
+                        entry.stage = "sorted" if other_complete else "received"
+                        entry.status = "taxonomy_sorted" if other_complete else "received"
             elif error is not None:
                 job.status = "failed"
                 job.result = None
                 job.error = error
                 if entry is not None:
-                    entry.stage = "received"
+                    other_complete = (await session.execute(
+                        select(TaxonomyClassification.id).where(
+                            TaxonomyClassification.pipeline_entry_id == entry.id,
+                            TaxonomyClassification.id != job.id,
+                            TaxonomyClassification.status == "complete",
+                            TaxonomyClassification.text_sha256 == job.text_sha256,
+                        ).limit(1)
+                    )).scalar_one_or_none()
+                    entry.stage = "sorted" if other_complete else "received"
                     entry.status = "taxonomy_failed"
             else:
                 job.status = "complete"
@@ -90,20 +111,27 @@ async def run() -> None:
     settings = get_settings()
     if not settings.taxonomy_enabled:
         raise RuntimeError("TAXONOMY_ENABLED must be true for the taxonomy worker")
-    model = TaxonomyModel(settings.taxonomy_model_dir)
+    model_key = os.environ.get("TAXONOMY_WORKER_MODEL", "tfidf")
+    if model_key not in MODEL_VERSIONS:
+        raise RuntimeError("TAXONOMY_WORKER_MODEL must be tfidf or minilm")
+    if model_key == "minilm":
+        from app.taxonomy.minilm import MiniLmTaxonomyModel
+        model = MiniLmTaxonomyModel(settings.taxonomy_model_dir)
+    else:
+        model = TaxonomyModel(settings.taxonomy_model_dir)
     engine = create_engine(settings)
     factory = create_session_factory(engine=engine)
     try:
         async with factory() as session:
             await session.execute(
                 update(TaxonomyClassification)
-                .where(TaxonomyClassification.status == "running")
+                .where(TaxonomyClassification.status == "running", TaxonomyClassification.model_key == model_key)
                 .values(status="queued", started_at=None)
             )
             await session.commit()
         while True:
             Path("/tmp/taxonomy-worker-heartbeat").touch()
-            job_id = await claim_next(factory)
+            job_id = await claim_next(factory, model_key)
             if job_id is None:
                 await asyncio.sleep(2)
                 continue

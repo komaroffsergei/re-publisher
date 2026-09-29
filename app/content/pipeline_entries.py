@@ -355,18 +355,20 @@ async def sync_pipeline_entry_stage(session: AsyncSession, post_id: int) -> Pipe
         is_failed_or_incomplete=status in INCOMPLETE_ENTRY_STATUSES,
     )
     if classification is None and published is None:
-        taxonomy_job = (
+        taxonomy_jobs = list((
             await session.execute(
                 select(TaxonomyClassification).where(TaxonomyClassification.pipeline_entry_id == entry.id)
             )
-        ).scalar_one_or_none()
+        ).scalars())
         post = (
             await session.execute(select(TelegramPost).where(TelegramPost.id == post_id))
         ).scalar_one_or_none()
-        if taxonomy_job and post and taxonomy_job.text_sha256 == text_sha256(post.text) and taxonomy_job.status in {"complete", "media_only"}:
+        completed = next((job for job in taxonomy_jobs if post and job.text_sha256 == text_sha256(post.text)
+                          and job.status in {"complete", "media_only", "empty"}), None)
+        if completed:
             stage = PIPELINE_STAGE_SORTED
-            status = "taxonomy_no_text" if taxonomy_job.status == "media_only" else (
-                "taxonomy_review" if (taxonomy_job.result or {}).get("review_status") == "needs_review" else "taxonomy_sorted"
+            status = ("taxonomy_media_only" if completed.status == "media_only" else "taxonomy_empty") if completed.status != "complete" else (
+                "taxonomy_review" if (completed.result or {}).get("review_status") == "needs_review" else "taxonomy_sorted"
             )
     now = datetime.now(timezone.utc)
     values: dict[str, Any] = {
