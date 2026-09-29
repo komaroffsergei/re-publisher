@@ -134,6 +134,7 @@ def main():
     parser.add_argument("baseline", type=Path)
     parser.add_argument("candidate", type=Path)
     parser.add_argument("output", type=Path)
+    parser.add_argument("--expected-count", type=int, default=450)
     args = parser.parse_args()
     if args.output.resolve().is_relative_to(Path(__file__).resolve().parents[1]):
         raise ValueError("private result must remain outside Git")
@@ -153,8 +154,8 @@ def main():
             raise ValueError(f"hash/version mismatch at {label['id']}")
         if not label["needs_review"]:
             rows.append((row, label))
-    if len([1 for label in labels if by_id[int(label["id"])]["partition_hint"] == "blind_test_candidate"]) != 450:
-        raise ValueError("all 450 blind posts must be labeled")
+    if len([1 for label in labels if by_id[int(label["id"])]["partition_hint"] == "blind_test_candidate"]) != args.expected_count:
+        raise ValueError(f"all {args.expected_count} blind posts must be labeled")
     texts = [row["text"] for row, _ in rows]
     args.output.mkdir(parents=True, exist_ok=True)
 
@@ -203,13 +204,13 @@ def main():
               "working_set_after_inference_bytes": working_set_bytes()}
     report = {
         "taxonomy_version": taxonomy["version"], "test_labels_sha256": hashlib.sha256(args.labels.read_bytes()).hexdigest(),
-        "test_total": 450, "test_accepted": len(rows), "test_needs_review": 450 - len(rows),
+        "test_total": args.expected_count, "test_accepted": len(rows), "test_needs_review": args.expected_count - len(rows),
         "baseline": baseline_report, "minilm_epoch_2": candidate_report,
         "minilm_cpu_inference": timing,
         "caveat": "Measures agreement with Codex labels, not independent human accuracy."
     }
     (args.output / "blind-test-report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({"test_total": 450, "accepted": len(rows),
+    print(json.dumps({"test_total": args.expected_count, "accepted": len(rows),
                       "baseline_macro_f1": baseline_report["macro_f1"],
                       "candidate_macro_f1": candidate_report["macro_f1"],
                       "candidate_p95_seconds": timing["p95_seconds"],

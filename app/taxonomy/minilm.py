@@ -34,7 +34,7 @@ class Classifier(nn.Module):
 class MiniLmTaxonomyModel:
     def __init__(self, model_dir: str | Path):
         model_dir = Path(model_dir)
-        candidate = model_dir / "minilm-v1"
+        candidate = model_dir / "minilm-v2"
         self.taxonomy = json.loads((model_dir / "taxonomy.json").read_text(encoding="utf-8"))
         training = json.loads((candidate / "training.json").read_text(encoding="utf-8"))
         expected = [category["id"] for category in self.taxonomy["categories"]]

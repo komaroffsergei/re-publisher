@@ -10,7 +10,7 @@ import numpy as np
 from scipy.sparse import hstack
 
 
-MODEL_VERSION = "codex-tfidf-3000-20260929"
+MODEL_VERSION = "codex-tfidf-maxplus1000-20260929"
 FEATURE_NAMES = {
     "is_ad": "Реклама",
     "is_event_related": "Про мероприятие",

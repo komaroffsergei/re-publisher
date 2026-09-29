@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import PipelineEntry, TaxonomyClassification, TaxonomyRun, TelegramChat, TelegramPost
 
-MODEL_VERSIONS = {"tfidf": "codex-tfidf-3000-20260929", "minilm": "codex-minilm-3000-20260929-e2"}
+MODEL_VERSIONS = {"tfidf": "codex-tfidf-maxplus1000-20260929", "minilm": "codex-minilm-maxplus1000-20260929-e2"}
 
 
 def text_sha256(text: str | None) -> str:
