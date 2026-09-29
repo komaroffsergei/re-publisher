@@ -30,16 +30,14 @@ from app.taxonomy.jobs import text_sha256
 
 PIPELINE_STAGE_RECEIVED = "received"
 PIPELINE_STAGE_SORTED = "sorted"
-PIPELINE_STAGE_ENRICHED = "enriched"
-PIPELINE_STAGE_REWRITTEN = "rewritten"
+PIPELINE_STAGE_MARKING = "marking"
 PIPELINE_STAGE_READY = "ready"
 PIPELINE_STAGE_PUBLISHED = "published"
 
 PIPELINE_STAGES = [
     PIPELINE_STAGE_RECEIVED,
     PIPELINE_STAGE_SORTED,
-    PIPELINE_STAGE_ENRICHED,
-    PIPELINE_STAGE_REWRITTEN,
+    PIPELINE_STAGE_MARKING,
     PIPELINE_STAGE_READY,
     PIPELINE_STAGE_PUBLISHED,
 ]
@@ -47,8 +45,7 @@ PIPELINE_STAGES = [
 PIPELINE_STAGE_LABELS = {
     PIPELINE_STAGE_RECEIVED: "Не готовы",
     PIPELINE_STAGE_SORTED: "Отсортирован",
-    PIPELINE_STAGE_ENRICHED: "Обогащен",
-    PIPELINE_STAGE_REWRITTEN: "Переписан",
+    PIPELINE_STAGE_MARKING: "Маркировка",
     PIPELINE_STAGE_READY: "Готов к публикации",
     PIPELINE_STAGE_PUBLISHED: "Опубликован",
 }
@@ -103,10 +100,8 @@ def pipeline_stage_for_state(
         return PIPELINE_STAGE_PUBLISHED
     if is_publication_ready and draft_status == READY_DRAFT_STATUS:
         return PIPELINE_STAGE_READY
-    if draft_status:
-        return PIPELINE_STAGE_REWRITTEN
-    if has_classification and has_content_item and is_eligible and is_enriched:
-        return PIPELINE_STAGE_ENRICHED
+    if draft_status or (has_classification and has_content_item and is_eligible and is_enriched):
+        return PIPELINE_STAGE_SORTED
     if has_classification:
         return PIPELINE_STAGE_SORTED
     return PIPELINE_STAGE_RECEIVED
@@ -370,6 +365,17 @@ async def sync_pipeline_entry_stage(session: AsyncSession, post_id: int) -> Pipe
             status = ("taxonomy_media_only" if completed.status == "media_only" else "taxonomy_empty") if completed.status != "complete" else (
                 "taxonomy_review" if (completed.result or {}).get("review_status") == "needs_review" else "taxonomy_sorted"
             )
+    if entry.marked_text_sha256:
+        current_post = (await session.execute(select(TelegramPost).where(TelegramPost.id == post_id))).scalar_one_or_none()
+        if current_post and not current_post.is_deleted and entry.marked_text_sha256 == text_sha256(current_post.text):
+            if stage == PIPELINE_STAGE_SORTED:
+                stage = PIPELINE_STAGE_MARKING
+                status = "marked"
+        else:
+            entry.marked_text = None
+            entry.marked_source_url = None
+            entry.marked_text_sha256 = None
+            entry.marked_at = None
     now = datetime.now(timezone.utc)
     values: dict[str, Any] = {
         "content_item_id": item.id if item else None,

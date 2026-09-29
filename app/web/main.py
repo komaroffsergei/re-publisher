@@ -45,6 +45,7 @@ from app.content.pipeline_entries import PIPELINE_STAGE_LABELS, PIPELINE_STAGES,
 from app.content.pipeline_logic import READY_DRAFT_STATUS
 from app.content.pipeline_manager import classify_post
 from app.content.pipeline_rewriter import rewrite_one, rewrite_ready_pipeline, telegram_post_source_url
+from app.content.source_marking import marked_post_text
 from app.content.processor import process_post
 from app.content.prompt_versions import (
     LINK_SUMMARY_PROMPT,
@@ -88,6 +89,7 @@ from app.models import (
     YandexGenreClassification,
 )
 from app.taxonomy.jobs import enqueue as enqueue_taxonomy, public_job, public_run
+from app.taxonomy.jobs import text_sha256
 
 web_cli = typer.Typer(no_args_is_help=True)
 security = HTTPBasic(auto_error=False)
@@ -490,8 +492,7 @@ def derived_stage_progress(stage: str | None) -> int:
     return {
         "received": 0,
         "sorted": 20,
-        "enriched": 45,
-        "rewritten": 70,
+        "marking": 70,
         "ready": 90,
         "published": 100,
     }.get(stage or "", 0)
@@ -653,6 +654,7 @@ async def board_state_for_entries(app: FastAPI, session, entry_ids: list[int]) -
             "moved": False,
             "stage": entry.stage,
             "status": entry.status,
+            "marked_source_url": entry.marked_source_url,
             "last_operation_at": iso_datetime(entry.last_operation_at),
             "updated_at": iso_datetime(entry.updated_at),
             "taxonomies": taxonomies,
@@ -1702,6 +1704,7 @@ def register_routes(app: FastAPI) -> None:
             draft_segments = markdown_link_segments(draft_display_body)
             rewrite_status = rewrite_status_payload(_entry, draft, attempts)
             source_post_url = telegram_post_source_url(primary_post, row[3])
+            marked_segments = markdown_link_segments(entry.marked_text)
             taxonomy_state = (await board_state_for_entries(request.app, session, [entry_id])).get(entry_id, {})
         return templates.TemplateResponse(
             request,
@@ -1719,6 +1722,7 @@ def register_routes(app: FastAPI) -> None:
                 "album_primary_entry_id": primary_entry_id,
                 "rewrite_status": rewrite_status,
                 "source_post_url": source_post_url,
+                "marked_segments": marked_segments,
                 "processing_enabled": request.app.state.settings.enable_processing,
                 "taxonomy_enabled": request.app.state.settings.taxonomy_enabled,
                 "taxonomy_state": taxonomy_state,
@@ -1828,6 +1832,58 @@ def register_routes(app: FastAPI) -> None:
             "updated_at": now_moscow_iso(),
             "entries": {str(entry_id): state for entry_id, state in entries.items()},
         }
+
+    @app.post("/api/pipeline/{entry_id}/mark-source", dependencies=[auth])
+    async def pipeline_mark_source(request: Request, entry_id: int):
+        origin = request.headers.get("origin")
+        if origin and urlsplit(origin).hostname != request.headers.get("host", "").split(":")[0]:
+            raise HTTPException(403, detail="Неверный источник запроса")
+        if request.headers.get("content-type", "").split(";")[0].strip() != "application/json":
+            raise HTTPException(415, detail="Нужен application/json")
+        async with session_factory(request)() as session:
+            row = (await session.execute(
+                select(PipelineEntry, TelegramPost, TelegramChat)
+                .join(TelegramPost, TelegramPost.id == PipelineEntry.source_post_id)
+                .join(TelegramChat, TelegramChat.peer_id == TelegramPost.chat_peer_id)
+                .where(PipelineEntry.id == entry_id)
+                .with_for_update(of=PipelineEntry)
+            )).first()
+            if row is None or row[2].folder_name != "MAX":
+                raise HTTPException(404, detail="Карточка не найдена")
+            entry, post, chat = row
+            if post.is_deleted or entry.stage not in {"sorted", "marking"}:
+                raise HTTPException(409, detail="Сначала отсортируйте пост")
+            active_job = (await session.execute(
+                select(TaxonomyClassification.id).where(
+                    TaxonomyClassification.pipeline_entry_id == entry.id,
+                    TaxonomyClassification.status.in_(("queued", "running")),
+                ).limit(1)
+            )).scalar_one_or_none()
+            if active_job:
+                raise HTTPException(409, detail="Дождитесь завершения сортировки")
+            source_post = post
+            if post.grouped_id is not None:
+                album_posts = list((await session.execute(
+                    select(TelegramPost)
+                    .where(TelegramPost.chat_peer_id == post.chat_peer_id,
+                           TelegramPost.grouped_id == post.grouped_id,
+                           TelegramPost.is_deleted.is_(False))
+                    .order_by(TelegramPost.message_id)
+                )).scalars())
+                if album_posts:
+                    source_post = album_primary(album_posts)
+            source_url = telegram_post_source_url(source_post, chat)
+            if not source_url:
+                raise HTTPException(409, detail="У этого чата нет ссылки на сообщение Telegram")
+            entry.marked_text = marked_post_text(post.text, source_url)
+            entry.marked_source_url = source_url
+            entry.marked_text_sha256 = text_sha256(post.text)
+            entry.marked_at = datetime.now(ZoneInfo("Europe/Moscow"))
+            entry.last_operation_at = entry.marked_at
+            entry.stage = "marking"
+            entry.status = "marked"
+            await session.commit()
+            return {"stage": entry.stage, "status": entry.status, "source_url": source_url}
 
     @app.post("/api/pipeline/{entry_id}/taxonomy/{model_key}", dependencies=[auth])
     @app.post("/api/pipeline/{entry_id}/taxonomy", dependencies=[auth])

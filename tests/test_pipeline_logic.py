@@ -15,11 +15,9 @@ from app.content.max_publisher import MAX_TEXT_LIMIT, MaxPublisherError, compose
 from app.content.max_publisher import extract_upload_token
 from app.content.pipeline_entries import (
     INCOMPLETE_ENTRY_STATUSES,
-    PIPELINE_STAGE_ENRICHED,
     PIPELINE_STAGE_PUBLISHED,
     PIPELINE_STAGE_READY,
     PIPELINE_STAGE_RECEIVED,
-    PIPELINE_STAGE_REWRITTEN,
     PIPELINE_STAGE_SORTED,
     pipeline_stage_for_state,
     link_summary_status_from_missing,
@@ -118,19 +116,19 @@ def test_pipeline_stage_tracks_lifecycle_order():
             **base,
             is_enriched=True,
         )
-        == PIPELINE_STAGE_ENRICHED
+        == PIPELINE_STAGE_SORTED
     )
     assert (
         pipeline_stage_for_state(
             **(base | {"draft_status": "draft"}),
         )
-        == PIPELINE_STAGE_REWRITTEN
+        == PIPELINE_STAGE_SORTED
     )
     assert (
         pipeline_stage_for_state(
             **(base | {"draft_status": READY_DRAFT_STATUS}),
         )
-        == PIPELINE_STAGE_REWRITTEN
+        == PIPELINE_STAGE_SORTED
     )
     assert (
         pipeline_stage_for_state(
@@ -143,7 +141,7 @@ def test_pipeline_stage_tracks_lifecycle_order():
         pipeline_stage_for_state(
             **(base | {"draft_status": READY_DRAFT_STATUS, "has_published_post": True}),
         )
-        == PIPELINE_STAGE_REWRITTEN
+        == PIPELINE_STAGE_SORTED
     )
     assert (
         pipeline_stage_for_state(

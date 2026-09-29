@@ -5,9 +5,9 @@
   <div>
     <h1>Конвейер</h1>
     {% if processing_enabled %}
-      <p class="muted">Полный цикл поста: получение из TG, сортировка, обогащение, рерайт, готовность и публикация.</p>
+      <p class="muted">Посты из Telegram: получение, сортировка, маркировка ссылкой на источник, готовность и публикация.</p>
     {% else %}
-      <p class="muted">Сообщения из папки MAX. {% if taxonomy_enabled %}Две стрелки запускают MiniLM и TF-IDF отдельно. Посты без текста сразу уходят в «Отсортирован»; рерайт и публикация отключены.{% else %}Обработка и публикация сейчас отключены.{% endif %}</p>
+      <p class="muted">Сообщения из папки MAX. {% if taxonomy_enabled %}Две стрелки запускают MiniLM и TF-IDF отдельно. После сортировки ссылка на оригинал добавляется на шаге «Маркировка». Посты без текста сразу уходят в «Отсортирован».{% else %}Обработка и публикация сейчас отключены.{% endif %}</p>
     {% endif %}
   </div>
   {% if processing_enabled %}
@@ -154,11 +154,14 @@
             <div class="kanban-card-top">
               <strong>#{{ entry.id }}</strong>
               <span class="status">post {{ entry.source_post_id }}</span>
-              {% if taxonomy_enabled and column.stage in ('received', 'sorted') and (post.text or '').strip() %}
+              {% if taxonomy_enabled and column.stage in ('received', 'sorted', 'marking') and (post.text or '').strip() %}
                 <span class="taxonomy-actions">
                   <button class="taxonomy-run" type="button" data-taxonomy-run="minilm" aria-label="Классифицировать пост #{{ entry.id }} моделью MiniLM" title="Новая модель MiniLM" {% if is_active %}disabled{% endif %}>→ <small>MiniLM</small></button>
                   <button class="taxonomy-run taxonomy-run-baseline" type="button" data-taxonomy-run="tfidf" aria-label="Классифицировать пост #{{ entry.id }} моделью TF-IDF" title="Контрольная модель TF-IDF" {% if is_active %}disabled{% endif %}>→ <small>TF-IDF</small></button>
                 </span>
+              {% endif %}
+              {% if column.stage == 'sorted' %}
+                <button class="mark-source-run" type="button" data-mark-source aria-label="Добавить ссылку на источник поста #{{ entry.id }}" {% if is_active %}disabled{% endif %}>Источник →</button>
               {% endif %}
             </div>
             <a class="kanban-card-link" href="/pipeline/{{ entry.id }}"><h3>{{ title }}</h3></a>
@@ -170,6 +173,7 @@
             {% if preview %}
               <p class="line-clamp">{{ preview }}</p>
             {% endif %}
+            <p data-marked-source {% if not entry.marked_source_url %}hidden{% endif %}>Источник: {% if entry.marked_source_url %}<a href="{{ entry.marked_source_url }}" target="_blank" rel="noopener noreferrer">оригинальный пост ↗</a>{% endif %}</p>
             <div class="kanban-pills">
               <span class="pill" data-status-pill>{{ entry.status }}</span>
               {% if post.grouped_id %}<span class="pill">альбом Telegram · #{{ post.message_id }}</span>{% endif %}
@@ -191,7 +195,7 @@
               <span class="pill">событие {{ entry.event_score if entry.event_score is not none else "?" }}</span>
             </div>
             {% endif %}
-            {% if taxonomy_enabled and column.stage in ('received', 'sorted') %}
+            {% if taxonomy_enabled and column.stage in ('received', 'sorted', 'marking') %}
               <div class="taxonomy-result" data-taxonomy-result aria-live="polite">{% if not (post.text or '').strip() %}{{ 'Только медиа' if post.media_type or post.media_path else 'Пустое сообщение' }}{% endif %}</div>
               {% if (post.text or '').strip() %}
               <details class="taxonomy-compare-disclosure">
@@ -314,6 +318,25 @@
     card.classList.toggle("has-error", hasError && !active);
     card.style.order = active ? "-1000" : card.dataset.originalOrder || "0";
     renderTaxonomy(card, state.taxonomies);
+    const markButton = card.querySelector('[data-mark-source]');
+    if (markButton) {
+      markButton.hidden = state.stage !== 'sorted';
+      markButton.disabled = active;
+    }
+    const source = card.querySelector('[data-marked-source]');
+    if (source && state.marked_source_url) {
+      source.replaceChildren();
+      source.append('Источник: ');
+      const link = document.createElement('a');
+      link.href = state.marked_source_url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = 'оригинальный пост ↗';
+      source.append(link);
+      source.hidden = false;
+    } else if (source) {
+      source.hidden = true;
+    }
     const comparison = card.querySelector('[data-taxonomy-compare]');
     const currentRuns = Object.values(state.taxonomies || {}).map((job) => job?.run_id).filter(Boolean).join(',');
     if (comparison && comparison.dataset.currentRuns !== currentRuns) {
@@ -368,6 +391,24 @@
 
   cards.forEach((card) => applyActiveOnly(card));
   cards.forEach((card) => {
+    card.querySelector('[data-mark-source]')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      try {
+        const response = await fetch(`/api/pipeline/${encodeURIComponent(card.dataset.entryId)}/mark-source`, {
+          method: 'POST', headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+          body: '{}', credentials: 'same-origin'
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          throw new Error(payload.detail || 'Не удалось добавить источник');
+        }
+        await pollBoardState();
+      } catch (error) {
+        button.disabled = false;
+        setBadge(card, error.message, error.message, 'error');
+      }
+    });
     const buttons = card.querySelectorAll("[data-taxonomy-run]");
     if (!buttons.length) return;
     buttons.forEach((button) => {

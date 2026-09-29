@@ -107,7 +107,7 @@ async def finish_job(factory, job_id: int, result: dict | None, elapsed_ms: int,
                 job.result = result
                 job.error = None
                 if entry is not None:
-                    entry.stage = "sorted"
+                    entry.stage = "marking" if entry.marked_text_sha256 == job.text_sha256 else "sorted"
                     entry.status = "taxonomy_review" if result and result["review_status"] == "needs_review" else "taxonomy_sorted"
             if entry is not None:
                 entry.last_operation_at = now

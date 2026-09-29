@@ -496,6 +496,10 @@ class PipelineEntry(TimestampMixin, Base):
     published_post_id: Mapped[int | None] = mapped_column(ForeignKey("published_posts.id", ondelete="SET NULL"), nullable=True)
     stage: Mapped[str] = mapped_column(Text, server_default="received", index=True, nullable=False)
     status: Mapped[str] = mapped_column(Text, server_default="rewrite_pending", index=True, nullable=False)
+    marked_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    marked_source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    marked_text_sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
+    marked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_operation_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True, nullable=False)
 

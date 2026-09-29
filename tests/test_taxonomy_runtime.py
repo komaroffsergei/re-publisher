@@ -70,7 +70,7 @@ def test_edited_text_hides_outdated_result():
 
 
 async def test_empty_media_is_sorted_without_queuing_either_model():
-    entry = SimpleNamespace(id=42, stage="received", status="received", last_operation_at=None)
+    entry = SimpleNamespace(id=42, stage="received", status="received", last_operation_at=None, marked_text_sha256=None)
     post = SimpleNamespace(id=42, text=" \n ", media_type="MessageMediaPhoto", media_path=None, is_deleted=False)
     chat = SimpleNamespace(folder_name="MAX")
     session = MagicMock()
@@ -92,7 +92,7 @@ async def test_empty_media_is_sorted_without_queuing_either_model():
 
 
 async def test_empty_without_media_is_not_mislabelled_as_media():
-    entry = SimpleNamespace(id=43, stage="received", status="received", last_operation_at=None)
+    entry = SimpleNamespace(id=43, stage="received", status="received", last_operation_at=None, marked_text_sha256=None)
     post = SimpleNamespace(id=43, text=None, media_type=None, media_path=None)
     session = MagicMock()
     session.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))

@@ -23,6 +23,39 @@
 </article>
 {% endif %}
 
+{% if entry.stage in ('sorted', 'marking') %}
+<article id="source-marking">
+  <h2>Маркировка</h2>
+  {% if entry.marked_text %}
+    <p class="muted">Текст со ссылкой сохранён отдельно. Оригинал Telegram не изменён.</p>
+    <div class="linked-text">{% for segment in marked_segments %}{% if segment.url %}<a href="{{ segment.url }}" target="_blank" rel="noopener noreferrer">{{ segment.text }}</a>{% else %}{{ segment.text }}{% endif %}{% endfor %}</div>
+    <p><a href="{{ entry.marked_source_url }}" target="_blank" rel="noopener noreferrer">Открыть исходное сообщение ↗</a></p>
+  {% else %}
+    <p class="muted">Добавляет к посту ссылку на исходное сообщение в Telegram.</p>
+  {% endif %}
+  <button type="button" id="mark-source-button">{{ 'Обновить ссылку' if entry.marked_text else 'Добавить источник →' }}</button>
+  <p id="mark-source-feedback" aria-live="polite"></p>
+</article>
+<script>
+document.getElementById('mark-source-button')?.addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  const feedback = document.getElementById('mark-source-feedback');
+  button.disabled = true;
+  feedback.textContent = 'Добавляю ссылку…';
+  try {
+    const response = await fetch('/api/pipeline/{{ entry.id }}/mark-source', {
+      method: 'POST', headers: {'Content-Type': 'application/json', 'Accept': 'application/json'}, body: '{}'
+    });
+    if (!response.ok) throw new Error((await response.json()).detail || 'Ошибка');
+    location.reload();
+  } catch (error) {
+    feedback.textContent = error.message;
+    button.disabled = false;
+  }
+});
+</script>
+{% endif %}
+
 {% if taxonomy_enabled %}
 {% set taxonomies = taxonomy_state.get('taxonomies') or {} %}
 <article id="taxonomy-detail" data-entry-id="{{ entry.id }}">
@@ -136,7 +169,7 @@
       <dt>Summary</dt><dd>{{ (item.translated_summary or item.source_summary) if item else "нет" }}</dd>
     </dl>
   </article>
-  <article>
+  {% if processing_enabled or draft %}<article>
     <h2>Рерайт</h2>
     {% if draft %}
       {% if draft.image_asset_id %}<img class="preview" src="/media/{{ draft.image_asset_id }}" alt="draft media">{% endif %}
@@ -157,7 +190,7 @@
     {% else %}
       <p class="muted">Черновик пока не создан.</p>
     {% endif %}
-  </article>
+  </article>{% endif %}
 </section>
 
 {% if source_media %}

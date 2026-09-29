@@ -53,7 +53,7 @@ async def mark_without_text(session: AsyncSession, entry: PipelineEntry, post: T
             pipeline_entry_id=entry.id, source_post_id=post.id, model_key="media", text_sha256=fingerprint
         )
         session.add(job)
-    if (job.status != status or job.text_sha256 != fingerprint or entry.stage != "sorted"
+    if (job.status != status or job.text_sha256 != fingerprint or entry.stage not in {"sorted", "marking"}
             or (job.result or {}).get("category") != ("only_media" if has_media else "empty")):
         now = datetime.now(timezone.utc)
         job.text_sha256 = fingerprint
@@ -67,7 +67,7 @@ async def mark_without_text(session: AsyncSession, entry: PipelineEntry, post: T
         job.started_at = None
         job.finished_at = now
         job.updated_at = now
-        entry.stage = "sorted"
+        entry.stage = "marking" if entry.marked_text_sha256 == fingerprint else "sorted"
         entry.status = "taxonomy_media_only" if has_media else "taxonomy_empty"
         entry.last_operation_at = now
     await session.flush()
@@ -99,7 +99,7 @@ async def enqueue(session: AsyncSession, entry_id: int, model_key: str) -> Taxon
     if row is None:
         raise HTTPException(404, detail="Карточка не найдена")
     entry, post, chat = row
-    if chat.folder_name != "MAX" or post.is_deleted or entry.stage not in {"received", "sorted"}:
+    if chat.folder_name != "MAX" or post.is_deleted or entry.stage not in {"received", "sorted", "marking"}:
         raise HTTPException(409, detail="Карточка недоступна для сортировки")
     if not (post.text or "").strip():
         return await mark_without_text(session, entry, post)

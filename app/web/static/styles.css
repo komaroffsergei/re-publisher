@@ -413,6 +413,9 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .taxonomy-run-baseline:hover:not(:disabled), .taxonomy-run-baseline:focus-visible { background: #eee7ff; }
 .taxonomy-run:hover:not(:disabled), .taxonomy-run:focus-visible { background: #ffbc4b; outline: 2px solid #7040a0; outline-offset: 2px; }
 .taxonomy-run:disabled { opacity: .45; cursor: wait; }
+.mark-source-run { padding: 6px 8px; font-size: 11px; white-space: nowrap; background: #ffe3ae; border-color: #a75e00; color: #442900; }
+.mark-source-run:hover:not(:disabled), .mark-source-run:focus-visible { background: #ffc85c; outline: 2px solid #7040a0; outline-offset: 2px; }
+.mark-source-run:disabled { opacity: .45; cursor: wait; }
 .taxonomy-result { display: grid; gap: 5px; margin-top: 9px; }
 .taxonomy-model-result { display: grid; gap: 5px; padding-top: 7px; border-top: 1px solid #c9c4d6; }
 .taxonomy-model-result h4 { margin: 0; font-size: 12px; }
