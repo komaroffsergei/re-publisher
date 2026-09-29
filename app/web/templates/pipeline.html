@@ -240,17 +240,6 @@
     badge.classList.toggle("is-updated", mode === "updated");
   }
 
-  function taxonomyLine(parent, name, score, kind = "") {
-    const line = document.createElement("div");
-    line.className = `taxonomy-score ${kind} ${score >= 0.65 ? "high" : score >= 0.4 ? "mid" : "low"}`;
-    const label = document.createElement("span");
-    label.textContent = name;
-    const value = document.createElement("strong");
-    value.textContent = `${Math.round(score * 100)}%`;
-    line.append(label, value);
-    parent.append(line);
-  }
-
   function renderTaxonomy(card, taxonomies) {
     const node = card.querySelector("[data-taxonomy-result]");
     const busy = Object.values(taxonomies || {}).some((job) => job && ["queued", "running"].includes(job.status));
@@ -272,60 +261,20 @@
       const heading = document.createElement("h4");
       heading.textContent = modelName;
       section.append(heading);
-      renderSingleTaxonomy(section, taxonomy);
+      const summary = document.createElement("p");
+      summary.className = "taxonomy-info";
+      if (taxonomy.status === "complete" && taxonomy.result) {
+        const top = taxonomy.result.top_3?.[0];
+        summary.textContent = `${top ? `${top.name} · ${Math.round(top.score * 100)}%` : "Нет уверенной категории"} · ${taxonomy.elapsed_ms ?? "?"} мс`;
+      } else {
+        summary.textContent = {
+          queued: "В очереди…", running: "Определяю…", failed: taxonomy.error || "Ошибка · можно повторить",
+          stale: "Текст изменился · запустите снова",
+        }[taxonomy.status] || taxonomy.status;
+      }
+      section.append(summary);
       node.append(section);
     }
-  }
-
-  function renderSingleTaxonomy(node, taxonomy) {
-    const status = taxonomy.status;
-    if (["queued", "running", "failed", "stale"].includes(status)) {
-      const message = document.createElement("p");
-      message.className = `taxonomy-message ${status === "failed" ? "is-error" : ""}`;
-      message.textContent = {
-        queued: "В очереди на сортировку",
-        running: "Определяю категории…",
-        failed: taxonomy.error || "Ошибка модели; можно повторить",
-        stale: "Текст изменился. Запустите сортировку ещё раз.",
-      }[status];
-      node.append(message);
-      return;
-    }
-    const result = taxonomy.result;
-    if (!result) return;
-    const info = document.createElement("p");
-    info.className = "taxonomy-info";
-    const duration = taxonomy.elapsed_ms === null ? "" : ` · ${taxonomy.elapsed_ms} мс`;
-    info.textContent = status === "media_only"
-      ? "Нет текста для смысловой классификации"
-      : `Оценки модели, не вероятность · ${taxonomy.model_version || "модель"}${duration}`;
-    node.append(info);
-    if (status === "media_only") return;
-    if (result.review_status === "needs_review") {
-      const warning = document.createElement("p");
-      warning.className = "taxonomy-message is-warning";
-      warning.textContent = "Не уверен: лучше проверить вручную";
-      node.append(warning);
-    }
-    for (const category of result.top_3 || []) {
-      const group = document.createElement("div");
-      group.className = "taxonomy-group";
-      taxonomyLine(group, category.name, category.score, "broad");
-      for (const child of category.subcategories || []) {
-        taxonomyLine(group, child.name, child.score, "sub");
-      }
-      node.append(group);
-    }
-    const features = document.createElement("div");
-    features.className = "taxonomy-features";
-    for (const feature of result.features || []) {
-      taxonomyLine(features, feature.name, feature.score, "feature");
-    }
-    node.append(features);
-    const complexity = document.createElement("p");
-    complexity.className = "taxonomy-complexity";
-    complexity.textContent = `Техническая сложность: ${result.technical_complexity ?? "?"}/5`;
-    node.append(complexity);
   }
 
   function applyActiveOnly(card) {

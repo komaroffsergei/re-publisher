@@ -435,6 +435,7 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .taxonomy-compare-disclosure > summary { color: #352451; font-size: 12px; font-weight: 700; cursor: pointer; }
 .taxonomy-comparison { display: grid; gap: 9px; min-width: 0; padding: 9px 0; }
 .compare-pickers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.taxonomy-compare-disclosure .compare-pickers { grid-template-columns: minmax(0, 1fr); }
 .compare-pickers label { display: grid; gap: 3px; min-width: 0; color: #352451; font-size: 11px; font-weight: 700; }
 .compare-pickers select { width: 100%; min-width: 0; padding: 5px; border: 1px solid #a99ab7; background: #fff; color: #241d30; font-size: 11px; }
 .compare-head, .compare-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(108px, 1fr); gap: 6px; align-items: center; }

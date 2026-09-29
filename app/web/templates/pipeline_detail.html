@@ -24,23 +24,6 @@
     <p id="taxonomy-detail-feedback" aria-live="polite"></p>
     <h3>История и сравнение прогонов</h3>
     {% set compare_entry_id = entry.id %}{% include '_taxonomy_compare.html' %}
-    {% for model_key, model_name in [('minilm', 'MiniLM'), ('tfidf', 'TF-IDF')] %}
-      {% set job = taxonomies.get(model_key) %}
-      {% if job %}
-        <section class="taxonomy-model-result">
-          <h3>{{ model_name }} · {{ job.status }}{% if job.elapsed_ms is not none %} · {{ job.elapsed_ms }} мс{% endif %}</h3>
-          {% if job.error %}<p class="error">{{ job.error }}</p>{% endif %}
-          {% if job.result %}
-            <p class="muted">{{ job.model_version }} · оценки модели, не вероятность</p>
-            {% for category in job.result.top_3 %}
-              <p><strong>{{ category.name }} {{ (category.score * 100)|round|int }}%</strong> · {% for child in category.subcategories %}{{ child.name }} {{ (child.score * 100)|round|int }}%{% if not loop.last %}, {% endif %}{% endfor %}</p>
-            {% endfor %}
-            <p>Признаки: {% for feature in job.result.features %}{{ feature.name }} {{ (feature.score * 100)|round|int }}%{% if not loop.last %}, {% endif %}{% endfor %}</p>
-            <p>Техническая сложность: {{ job.result.technical_complexity }}/5</p>
-          {% endif %}
-        </section>
-      {% endif %}
-    {% endfor %}
   {% endif %}
 </article>
 <script src="/static/taxonomy-compare.js?v=20260929-1" defer></script>
