@@ -1,4 +1,4 @@
-"""One durable classification row per model and post; source text stays in TelegramPost."""
+"""Queue the current state and preserve each model run without storing post text."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import PipelineEntry, TaxonomyClassification, TelegramChat, TelegramPost
+from app.models import PipelineEntry, TaxonomyClassification, TaxonomyRun, TelegramChat, TelegramPost
 
 MODEL_VERSIONS = {"tfidf": "codex-tfidf-3000-20260929", "minilm": "codex-minilm-3000-20260929-e2"}
 
@@ -23,6 +23,7 @@ def public_job(job: TaxonomyClassification | None, current_text: str | None = No
         return None
     status = "stale" if current_text is not None and job.text_sha256 != text_sha256(current_text) else job.status
     return {
+        "run_id": getattr(job, "current_run_id", None),
         "model_key": job.model_key,
         "status": status,
         "model_version": job.model_version,
@@ -131,6 +132,14 @@ async def enqueue(session: AsyncSession, entry_id: int, model_key: str) -> Taxon
         session.add(job)
     job.text_sha256 = fingerprint
     job.model_version = MODEL_VERSIONS[model_key]
+    run = TaxonomyRun(
+        pipeline_entry_id=entry.id, source_post_id=post.id, model_key=model_key,
+        text_sha256=fingerprint, model_version=MODEL_VERSIONS[model_key],
+        status="queued", queued_at=now,
+    )
+    session.add(run)
+    await session.flush()
+    job.current_run_id = run.id
     job.status = "queued"
     job.result = None
     job.error = None
@@ -152,6 +161,13 @@ async def invalidate_if_edited(session: AsyncSession, post_id: int, text: str | 
         return False
     now = datetime.now(timezone.utc)
     for job in changed:
+        if job.current_run_id is not None and job.status in {"queued", "running"}:
+            run = (await session.execute(
+                select(TaxonomyRun).where(TaxonomyRun.id == job.current_run_id).with_for_update()
+            )).scalar_one_or_none()
+            if run is not None:
+                run.status = "stale"
+                run.finished_at = now
         job.status = "stale"
         job.result = None
         job.error = None
@@ -162,3 +178,20 @@ async def invalidate_if_edited(session: AsyncSession, post_id: int, text: str | 
         entry.status = "received"
         entry.last_operation_at = now
     return True
+
+
+def public_run(run: TaxonomyRun, current_text: str | None) -> dict:
+    return {
+        "id": run.id,
+        "model_key": run.model_key,
+        "model_version": run.model_version,
+        "status": run.status,
+        "result": run.result,
+        "error": run.error,
+        "elapsed_ms": run.elapsed_ms,
+        "origin": run.origin,
+        "is_current_text": run.text_sha256 == text_sha256(current_text),
+        "queued_at": run.queued_at.isoformat() if run.queued_at else None,
+        "started_at": run.started_at.isoformat() if run.started_at else None,
+        "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+    }

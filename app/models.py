@@ -509,6 +509,7 @@ class TaxonomyClassification(Base):
         ForeignKey("pipeline_entries.id", ondelete="CASCADE"), nullable=False
     )
     model_key: Mapped[str] = mapped_column(Text, server_default="tfidf", nullable=False)
+    current_run_id: Mapped[int | None] = mapped_column(ForeignKey("taxonomy_runs.id", ondelete="SET NULL"), nullable=True)
     source_post_id: Mapped[int] = mapped_column(ForeignKey("telegram_posts.id", ondelete="CASCADE"), nullable=False)
     text_sha256: Mapped[str] = mapped_column(Text, nullable=False)
     model_version: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -521,6 +522,27 @@ class TaxonomyClassification(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class TaxonomyRun(Base):
+    """One persisted attempt; results remain available after another run or a text edit."""
+
+    __tablename__ = "taxonomy_runs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    pipeline_entry_id: Mapped[int] = mapped_column(ForeignKey("pipeline_entries.id", ondelete="CASCADE"), nullable=False)
+    source_post_id: Mapped[int] = mapped_column(ForeignKey("telegram_posts.id", ondelete="CASCADE"), nullable=False)
+    model_key: Mapped[str] = mapped_column(Text, nullable=False)
+    text_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    model_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    elapsed_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    origin: Mapped[str] = mapped_column(Text, server_default="run", nullable=False)
+    queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class RewriteAttempt(Base):

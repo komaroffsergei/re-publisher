@@ -22,6 +22,8 @@
     </div>
     <p class="muted">Модели запускаются отдельно. Оценки не откалиброваны и могут расходиться.</p>
     <p id="taxonomy-detail-feedback" aria-live="polite"></p>
+    <h3>История и сравнение прогонов</h3>
+    {% set compare_entry_id = entry.id %}{% include '_taxonomy_compare.html' %}
     {% for model_key, model_name in [('minilm', 'MiniLM'), ('tfidf', 'TF-IDF')] %}
       {% set job = taxonomies.get(model_key) %}
       {% if job %}
@@ -41,6 +43,7 @@
     {% endfor %}
   {% endif %}
 </article>
+<script src="/static/taxonomy-compare.js?v=20260929-1" defer></script>
 <script>
 (() => {
   const section = document.getElementById('taxonomy-detail');

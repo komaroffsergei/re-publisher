@@ -13,7 +13,7 @@ from sqlalchemy import select, update
 
 from app.config import get_settings
 from app.db import create_engine, create_session_factory
-from app.models import PipelineEntry, TaxonomyClassification, TelegramPost
+from app.models import PipelineEntry, TaxonomyClassification, TaxonomyRun, TelegramPost
 from app.taxonomy.inference import TaxonomyModel
 from app.taxonomy.jobs import MODEL_VERSIONS, text_sha256
 
@@ -39,6 +39,12 @@ async def claim_next(factory, model_key: str) -> int | None:
             job.attempts += 1
             job.started_at = datetime.now(timezone.utc)
             job.updated_at = job.started_at
+            if job.current_run_id is not None:
+                run = (await session.execute(
+                    select(TaxonomyRun).where(TaxonomyRun.id == job.current_run_id).with_for_update()
+                )).scalar_one()
+                run.status = "running"
+                run.started_at = job.started_at
             return job.id
 
 
@@ -105,6 +111,15 @@ async def finish_job(factory, job_id: int, result: dict | None, elapsed_ms: int,
                     entry.status = "taxonomy_review" if result and result["review_status"] == "needs_review" else "taxonomy_sorted"
             if entry is not None:
                 entry.last_operation_at = now
+            if job.current_run_id is not None:
+                run = (await session.execute(
+                    select(TaxonomyRun).where(TaxonomyRun.id == job.current_run_id).with_for_update()
+                )).scalar_one()
+                run.status = job.status
+                run.result = job.result
+                run.error = job.error
+                run.elapsed_ms = job.elapsed_ms
+                run.finished_at = now
 
 
 async def run() -> None:
@@ -126,6 +141,11 @@ async def run() -> None:
             await session.execute(
                 update(TaxonomyClassification)
                 .where(TaxonomyClassification.status == "running", TaxonomyClassification.model_key == model_key)
+                .values(status="queued", started_at=None)
+            )
+            await session.execute(
+                update(TaxonomyRun)
+                .where(TaxonomyRun.status == "running", TaxonomyRun.model_key == model_key)
                 .values(status="queued", started_at=None)
             )
             await session.commit()

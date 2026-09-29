@@ -431,6 +431,30 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .taxonomy-score.low strong { color: #766887; }
 .taxonomy-features { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px 7px; padding: 5px; background: #f5f2ea; }
 .taxonomy-complexity { color: #353147; font-weight: 600; }
+.taxonomy-compare-disclosure { margin-top: 9px; padding: 8px; border: 1px solid #9c8caf; background: #faf7ff; }
+.taxonomy-compare-disclosure > summary { color: #352451; font-size: 12px; font-weight: 700; cursor: pointer; }
+.taxonomy-comparison { display: grid; gap: 9px; min-width: 0; padding: 9px 0; }
+.compare-pickers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.compare-pickers label { display: grid; gap: 3px; min-width: 0; color: #352451; font-size: 11px; font-weight: 700; }
+.compare-pickers select { width: 100%; min-width: 0; padding: 5px; border: 1px solid #a99ab7; background: #fff; color: #241d30; font-size: 11px; }
+.compare-head, .compare-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(108px, 1fr); gap: 6px; align-items: center; }
+.compare-head { padding: 5px 0; border-bottom: 2px solid #594388; font-size: 10px; }
+.compare-head .compare-minilm { color: #a35400; }
+.compare-head .compare-tfidf { color: #594388; }
+.compare-scores { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+.compare-row { padding: 4px 0; border-bottom: 1px solid #e1dce9; font-size: 11px; }
+.compare-label { overflow-wrap: anywhere; }
+.compare-sub .compare-label { padding-left: 8px; color: #645d70; font-size: 10px; }
+.compare-score { position: relative; display: grid; place-items: center; min-height: 24px; background: #f0ecf1; font-variant-numeric: tabular-nums; }
+.compare-score strong { position: relative; z-index: 1; font-size: 10px; }
+.compare-bar { position: absolute; inset: 0 auto 0 0; }
+.compare-minilm .compare-bar { background: #f5a33e; }
+.compare-tfidf .compare-bar { background: #c4a6ed; }
+.compare-section-title { margin: 12px 0 4px; font-size: 12px; }
+.compare-footer { margin: 10px 0 0; color: #352451; font-size: 11px; font-weight: 600; }
+.compare-more { justify-self: start; font-size: 11px; }
+#taxonomy-detail .taxonomy-comparison { max-width: 800px; }
+#taxonomy-detail .compare-head, #taxonomy-detail .compare-row { grid-template-columns: minmax(0, 2fr) minmax(180px, 1fr); }
 .kanban-meta {
   display: grid;
   gap: 2px;

@@ -8,7 +8,8 @@ import numpy as np
 from scipy.sparse import csr_matrix
 
 from app.taxonomy.inference import TaxonomyModel
-from app.taxonomy.jobs import enqueue, mark_without_text, public_job, text_sha256
+from app.taxonomy.jobs import enqueue, mark_without_text, public_job, public_run, text_sha256
+from app.models import TaxonomyRun
 
 
 class FakeVectorizer:
@@ -102,3 +103,43 @@ async def test_empty_without_media_is_not_mislabelled_as_media():
     assert job.status == "empty"
     assert job.result["category"] == "empty"
     assert entry.stage == "sorted"
+
+
+async def test_repeated_classification_creates_another_persisted_run():
+    entry = SimpleNamespace(id=57, stage="sorted", status="taxonomy_sorted", last_operation_at=None)
+    post = SimpleNamespace(id=57, text="текст поста", is_deleted=False)
+    chat = SimpleNamespace(folder_name="MAX")
+    existing = SimpleNamespace(
+        id=70, pipeline_entry_id=57, source_post_id=57, model_key="minilm",
+        text_sha256=text_sha256(post.text), status="complete", current_run_id=33,
+        result={"top_3": []}, attempts=1,
+    )
+    session = MagicMock()
+    session.execute = AsyncMock(side_effect=[
+        SimpleNamespace(first=lambda: (entry, post, chat)),
+        SimpleNamespace(scalar_one_or_none=lambda: existing),
+        SimpleNamespace(scalar_one_or_none=lambda: None),
+    ])
+    session.flush = AsyncMock()
+
+    job = await enqueue(session, 57, "minilm")
+
+    new_run = next(value for call in session.add.call_args_list
+                   if isinstance(value := call.args[0], TaxonomyRun))
+    assert new_run.model_key == "minilm"
+    assert new_run.status == "queued"
+    assert existing.status == "queued"
+    assert existing.attempts == 1
+    assert job is existing
+
+
+def test_run_history_marks_results_for_previous_text():
+    run = SimpleNamespace(
+        id=45, model_key="tfidf", model_version="v1", status="complete",
+        result={"top_3": []}, error=None, elapsed_ms=12, origin="run",
+        text_sha256=text_sha256("старый текст"),
+        queued_at=datetime(2026, 9, 29, tzinfo=timezone.utc), started_at=None, finished_at=None,
+    )
+    assert public_run(run, "старый текст")["is_current_text"] is True
+    assert public_run(run, "новый текст")["is_current_text"] is False
+    assert public_run(run, "новый текст")["result"] == {"top_3": []}

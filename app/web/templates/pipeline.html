@@ -191,6 +191,12 @@
             {% endif %}
             {% if taxonomy_enabled and column.stage in ('received', 'sorted') %}
               <div class="taxonomy-result" data-taxonomy-result aria-live="polite">{% if not (post.text or '').strip() %}{{ 'Только медиа' if post.media_type or post.media_path else 'Пустое сообщение' }}{% endif %}</div>
+              {% if (post.text or '').strip() %}
+              <details class="taxonomy-compare-disclosure">
+                <summary>Сравнить прогоны двух моделей</summary>
+                {% set compare_entry_id = entry.id %}{% include '_taxonomy_compare.html' %}
+              </details>
+              {% endif %}
             {% endif %}
           </div>
         {% else %}
@@ -201,6 +207,7 @@
   {% endfor %}
 </section>
 </div>
+<script src="/static/taxonomy-compare.js?v=20260929-1" defer></script>
 <script>
 (() => {
   const cards = Array.from(document.querySelectorAll(".kanban-card[data-entry-id]"));
@@ -356,6 +363,12 @@
     card.classList.toggle("has-error", hasError && !active);
     card.style.order = active ? "-1000" : card.dataset.originalOrder || "0";
     renderTaxonomy(card, state.taxonomies);
+    const comparison = card.querySelector('[data-taxonomy-compare]');
+    const currentRuns = Object.values(state.taxonomies || {}).map((job) => job?.run_id).filter(Boolean).join(',');
+    if (comparison && comparison.dataset.currentRuns !== currentRuns) {
+      if (comparison.dataset.currentRuns !== undefined) comparison.refreshTaxonomyRuns?.();
+      comparison.dataset.currentRuns = currentRuns;
+    }
 
     if (active) {
       const progress = state.progress === null || state.progress === undefined ? "" : ` · ${state.progress}%`;

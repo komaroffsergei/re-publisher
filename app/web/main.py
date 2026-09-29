@@ -83,9 +83,10 @@ from app.models import (
     TelegramChat,
     TelegramPost,
     TaxonomyClassification,
+    TaxonomyRun,
     YandexGenreClassification,
 )
-from app.taxonomy.jobs import enqueue as enqueue_taxonomy, public_job
+from app.taxonomy.jobs import enqueue as enqueue_taxonomy, public_job, public_run
 
 web_cli = typer.Typer(no_args_is_help=True)
 security = HTTPBasic(auto_error=False)
@@ -1819,6 +1820,27 @@ def register_routes(app: FastAPI) -> None:
             job = await enqueue_taxonomy(session, entry_id, model_key)
             await session.commit()
             return public_job(job)
+
+    @app.get("/api/pipeline/{entry_id}/taxonomy-runs", dependencies=[auth])
+    async def pipeline_taxonomy_runs(request: Request, entry_id: int, before_id: int | None = None):
+        async with session_factory(request)() as session:
+            row = (await session.execute(
+                select(TelegramPost, TelegramChat)
+                .join(PipelineEntry, PipelineEntry.source_post_id == TelegramPost.id)
+                .join(TelegramChat, TelegramChat.peer_id == TelegramPost.chat_peer_id)
+                .where(PipelineEntry.id == entry_id)
+            )).first()
+            if row is None or row[1].folder_name != "MAX":
+                raise HTTPException(404, detail="Карточка не найдена")
+            statement = select(TaxonomyRun).where(TaxonomyRun.pipeline_entry_id == entry_id)
+            if before_id is not None:
+                statement = statement.where(TaxonomyRun.id < before_id)
+            runs = list((await session.execute(statement.order_by(TaxonomyRun.id.desc()).limit(51))).scalars())
+            has_more = len(runs) > 50
+            return {
+                "runs": [public_run(run, row[0].text) for run in runs[:50]],
+                "next_before_id": runs[49].id if has_more else None,
+            }
 
     @app.get("/api/pipeline/{entry_id}/pipeline-status", dependencies=[auth])
     async def pipeline_status(request: Request, entry_id: int):
