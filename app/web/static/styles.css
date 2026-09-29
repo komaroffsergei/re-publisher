@@ -384,6 +384,7 @@ dd { margin: 0; overflow-wrap: anywhere; }
 }
 .kanban-card-top {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
