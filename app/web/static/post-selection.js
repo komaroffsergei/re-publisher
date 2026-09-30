@@ -35,6 +35,24 @@
     if(node)render(node,state||{marks:[],checks:[]},active);
   };
   document.querySelectorAll('[data-post-selection]').forEach(node=>render(node,JSON.parse(node.querySelector('[data-selection-initial]').textContent)));
+  // На открытой карточке применение фильтра может завершиться без запуска модели из этого окна.
+  const sourcePanel=document.getElementById('source-marking');
+  const detail=sourcePanel ? document.querySelector('[data-post-selection]') : null;
+  if(detail) {
+    let loading=false;
+    setInterval(async()=>{
+      if(document.hidden || loading)return;loading=true;
+      try {
+        const response=await fetch(`/api/pipeline/board-state?entry_ids=${detail.dataset.entryId}`,{cache:'no-store'});
+        if(!response.ok)return;
+        const state=(await response.json()).entries?.[detail.dataset.entryId];if(!state)return;
+        render(detail,state.selection,state.active);
+        sourcePanel.hidden=!['filtered','marking'].includes(state.stage);
+        document.getElementById('mark-source-button').disabled=!state.can_mark_source;
+      }catch(error){ /* Следующий опрос восстановит состояние после временного обрыва связи. */ }
+      finally{loading=false;}
+    },5000);
+  }
   document.addEventListener('click',async(event)=>{
     const button=event.target.closest('[data-remove-mark]');if(!button)return;
     const container=button.closest('[data-post-selection]');button.disabled=true;
