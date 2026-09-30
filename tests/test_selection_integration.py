@@ -12,6 +12,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.db import Base
+from app.config import get_settings
 from app.content.selection_filters import application_batch, evaluate_completed_job, load_states, remove_mark
 from app.content.selection_rules import taxonomy_catalog
 from app.models import (FilterApplication, FilterEvaluation, FilterMark, FilterMarkEvent, PipelineEntry,
@@ -38,14 +39,19 @@ async def db():
 
 @pytest_asyncio.fixture
 async def client(db):
+    get_settings.cache_clear()
     app = create_app()
     app.state.session_factory = db
     app.state.settings.web_basic_auth_user = "qa"
     app.state.settings.web_basic_auth_password = "qa-password"
     app.state.settings.taxonomy_enabled = True
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://qa.local",
-                                auth=("qa", "qa-password")) as connection:
-        yield connection
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://qa.local",
+                                    auth=("qa", "qa-password")) as connection:
+            yield connection
+    finally:
+        # Settings кэшируются на процесс: авторизация QA не должна утекать в другие тесты.
+        get_settings.cache_clear()
 
 
 async def seed(factory, legacy=False):
