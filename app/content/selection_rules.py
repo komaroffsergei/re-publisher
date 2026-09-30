@@ -74,3 +74,22 @@ def evaluate(expression: dict, scores: dict[str, float]) -> tuple[bool | None, d
     else:
         result = True if True in values else (None if None in values else False)
     return result, {"op": op, "result": result, "children": [trace for _value, trace in evaluated]}
+
+
+def matching_conditions(trace: dict) -> list[dict]:
+    """Только условия, объясняющие совпадение; ложные ветки ИЛИ не показываем.
+
+    Под НЕ доказательством может быть несоблюдённый порог. Отсутствие оценки
+    остаётся неизвестным и никогда не становится основанием совпадения.
+    """
+    def visit(node, expected):
+        if node.get("result") is not expected:
+            return []
+        if node["op"] == "condition":
+            return [{**node, "negated": not expected}]
+        if node["op"] == "not":
+            return visit(node["children"][0], not expected)
+        return [condition for child in node["children"]
+                for condition in visit(child, expected)]
+
+    return visit(trace, True)

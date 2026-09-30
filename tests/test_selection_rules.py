@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.content.selection_rules import evaluate, taxonomy_catalog, validate_expression
+from app.content.selection_rules import evaluate, matching_conditions, taxonomy_catalog, validate_expression
 from app.content.selection_filters import assessment, needs_backfill
 from app.taxonomy.jobs import text_sha256
 from app.web.selection_routes import FilterInput, digest
@@ -24,6 +24,32 @@ def test_nested_and_or_not():
     assert validate_expression(tree) == tree
     assert evaluate(tree, {"tool_description": .8, "software_engineering": .2, "society": .1})[0] is True
     assert evaluate(tree, {"tool_description": .5, "software_engineering": .9})[0] is False
+
+
+def test_matching_conditions_excludes_failed_or_branch_and_keeps_negation():
+    tree = {"op": "and", "children": [leaf(), {"op": "or", "children": [
+        leaf("software_engineering"), {"op": "not", "children": [leaf("society")]}]}]}
+    _, trace = evaluate(tree, {"tool_description": .8, "software_engineering": .2, "society": .1})
+    proof = matching_conditions(trace)
+    assert [(item["label_id"], item["score"], item["negated"]) for item in proof] == [
+        ("tool_description", .8, False), ("society", .1, True)]
+
+
+@pytest.mark.parametrize("op,expected", [("and", ["society"]), ("or", ["tool_description", "society"])])
+def test_negated_groups_show_only_conditions_explaining_the_result(op, expected):
+    tree = {"op": "not", "children": [{"op": op, "children": [leaf(), leaf("society")]}]}
+    scores = {"tool_description": .8 if op == "and" else .2, "society": .1}
+    proof = matching_conditions(evaluate(tree, scores)[1])
+    assert [item["label_id"] for item in proof] == expected
+    assert all(item["negated"] for item in proof)
+
+
+def test_unknown_rejection_and_double_negation_in_match_proof():
+    assert matching_conditions(evaluate(leaf(), {})[1]) == []
+    assert matching_conditions(evaluate(leaf(), {"tool_description": .1})[1]) == []
+    tree = {"op": "not", "children": [{"op": "not", "children": [leaf()]}]}
+    proof = matching_conditions(evaluate(tree, {"tool_description": .8})[1])
+    assert len(proof) == 1 and proof[0]["negated"] is False
 
 
 @pytest.mark.parametrize("score", [None, float("nan"), -1, 1.1, True, "0.7"])

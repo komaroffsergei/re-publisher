@@ -538,9 +538,15 @@ async def test_preview_keeps_scored_post_after_many_media_cards(db, client):
     assert response.status_code == 200, response.text
     data = response.json()
     assert data["total"] == 14 and data["unknown"] == 13 and data["matched"] == 1
-    assert len(data["examples"]) == 12
+    assert len(data["examples"]) == 1
     assert data["examples"][0]["entry_id"] == entry_id
     assert data["examples"][0]["trace"]["score"] == 0.8
+    assert data["examples"][0]["text"]
+    assert data["examples"][0]["matching_conditions"][0]["score"] == 0.8
+    draft["expression"]["compare"] = "lt"
+    data = (await client.post("/api/pipeline/filters/preview", json=draft)).json()
+    assert data["matched"] == 0 and data["examples"] == []
+    assert data["rejected"] == 1 and data["unknown"] == 13
 
 
 async def test_current_pages_and_dashboard_match_database(db, client):

@@ -130,9 +130,6 @@
       previewDigest = null;
       apply.disabled = true;
       preview.replaceChildren();
-      document.querySelectorAll("[data-rule-score]").forEach((node) => {
-        node.textContent = "Оценка модели появится после предпросмотра.";
-      });
     };
     const condition = () => ({
       op: "condition",
@@ -226,24 +223,6 @@
           label("Сравнение", compare),
           label("Порог, %", threshold),
         );
-        const score = el(
-          "p",
-          "Оценка модели появится после предпросмотра.",
-          "muted",
-        );
-        score.dataset.ruleScore = "";
-        score.dataset.labelId = node.label_id;
-        wrapper.append(score);
-        const changedCategory = category.onchange,
-          changedSubcategory = subcategory.onchange;
-        category.onchange = () => {
-          changedCategory();
-          score.dataset.labelId = node.label_id;
-        };
-        subcategory.onchange = () => {
-          changedSubcategory();
-          score.dataset.labelId = node.label_id;
-        };
       } else {
         const header = el("div", undefined, "rule-group-header");
         const mode = el("select");
@@ -455,88 +434,79 @@
         feedback.textContent =
           "Предпросмотр готов. Настройки ещё не применены.";
         feedback.className = "";
-        preview.append(el("h3", "Предпросмотр"));
-        const metrics = el("div", undefined, "preview-metrics");
-        for (const [key, title] of [
-          ["total", "Всего"],
-          ["matched", "Совпало"],
-          ["rejected", "Не прошло"],
-          ["unknown", "Нет оценки"],
-          ["new_marks", "Новые лейблы"],
-          ["backfill_needed", "Досчитать"],
-        ]) {
-          const metric = el("div");
-          metric.append(el("strong", String(data[key])), el("span", title));
-          metrics.append(metric);
-        }
-        preview.append(metrics);
-        const percent = (score) =>
-          score == null ? "нет оценки" : `${(score * 100).toFixed(2)}%`;
-        if (data.examples.length) {
-          const postSelect = el("select");
-          postSelect.setAttribute("aria-label", "Пост для показа оценок");
-          for (const example of data.examples)
-            postSelect.add(
-              new Option(`Пост #${example.entry_id}`, String(example.entry_id)),
-            );
-          function showScores() {
-            const example = data.examples.find(
-                (item) => String(item.entry_id) === postSelect.value,
-              ),
-              scores = new Map();
-            function read(trace) {
-              if (trace.op === "condition")
-                scores.set(trace.label_id, trace.score);
-              else trace.children?.forEach(read);
-            }
-            read(example.trace);
-            document.querySelectorAll("[data-rule-score]").forEach((node) => {
-              node.textContent = `Пост #${example.entry_id} · ${form.elements.model_key.value === "tfidf" ? "TF-IDF" : "MiniLM"}: ${percent(scores.get(node.dataset.labelId))}`;
-            });
-          }
-          postSelect.onchange = showScores;
-          preview.append(label("Пост для показа оценок", postSelect));
-          showScores();
-        }
-        function scoreDetails(trace) {
-          if (trace.reason) return trace.reason;
-          if (trace.op === "condition") {
-            const item = catalog.find((item) => item.id === trace.label_id);
-            const parent = catalog.find((parent) => parent.id === item?.parent);
-            const name = parent
-              ? `${parent.name} / ${item.name}`
-              : item?.name || trace.label_id;
-            const score =
-              trace.score == null
-                ? "нет оценки"
-                : `${(trace.score * 100).toFixed(2)}%`;
-            return `${name}: оценка модели ${score} · порог ${{ gte: "≥", gt: ">", lte: "≤", lt: "<" }[trace.compare]} ${trace.threshold}%`;
-          }
-          const children = trace.children.map(scoreDetails);
-          return trace.op === "not"
-            ? `НЕ (${children[0]})`
-            : `(${children.join(trace.op === "and" ? " И " : " ИЛИ ")})`;
-        }
-        for (const example of data.examples) {
-          const line = el("p");
-          const link = el("a", `#${example.entry_id}`);
-          link.href = `/pipeline/${example.entry_id}`;
-          link.target = "_blank";
-          line.append(
-            link,
-            ` · ${{ matched: "Совпало", rejected: "Не прошло", unknown: "Нет оценки" }[example.outcome]}`,
-          );
-          preview.append(
-            line,
-            el("p", scoreDetails(example.trace), "selection-reason"),
-          );
+        preview.append(el("h3", `Совпало: ${data.matched}`));
+        const model =
+          form.elements.model_key.value === "tfidf" ? "TF-IDF" : "MiniLM";
+        const mark = marks.find(
+          (item) => String(item.id) === assignedMark.value,
+        );
+        preview.append(el("p", `${model} · лейбл «${mark.name}»`, "muted"));
+        if (data.matched > data.examples.length)
           preview.append(
             el(
               "p",
-              `Назначаемый лейбл: ${marks.find((mark) => String(mark.id) === assignedMark.value)?.name || "—"}`,
-              "selection-reason",
+              `Показаны первые ${data.examples.length} совпадений из ${data.matched}.`,
+              "muted",
             ),
           );
+        if (!data.matched)
+          preview.append(
+            el("p", "По этим условиям совпадений нет.", "preview-empty"),
+          );
+        if (data.backfill_needed)
+          preview.append(
+            el(
+              "p",
+              `Ещё ${data.backfill_needed} постов требуют актуальных оценок. После применения фильтра они будут досчитаны.`,
+              "muted",
+            ),
+          );
+        const operators = { gte: "≥", gt: ">", lte: "≤", lt: "<" };
+        const inverted = { gte: "lt", gt: "lte", lte: "gt", lt: "gte" };
+        for (const example of data.examples) {
+          const card = el("article", undefined, "preview-match");
+          const heading = el("header", undefined, "preview-match-header");
+          const link = el("a", `Пост #${example.entry_id} ↗`);
+          link.href = `/pipeline/${example.entry_id}`;
+          link.target = "_blank";
+          link.rel = "noopener";
+          heading.append(link, el("span", "Совпало", "preview-match-status"));
+          card.append(
+            heading,
+            el(
+              "p",
+              `${example.text}${example.text_truncated ? "…" : ""}`,
+              "preview-match-text",
+            ),
+          );
+          const conditions = el("div", undefined, "preview-match-conditions");
+          conditions.setAttribute("aria-label", "Условия, по которым совпало");
+          for (const condition of example.matching_conditions) {
+            const item = catalog.find((item) => item.id === condition.label_id);
+            const parent = catalog.find((parent) => parent.id === item?.parent);
+            const name = parent ? `${parent.name} / ${item.name}` : item.name;
+            const chip = el("div", undefined, "preview-match-condition");
+            chip.append(el("strong", name));
+            const compare = condition.negated
+              ? inverted[condition.compare]
+              : condition.compare;
+            chip.append(
+              el(
+                "span",
+                `${(condition.score * 100).toFixed(2)}% ${operators[compare]} ${condition.threshold}%`,
+              ),
+            );
+            if (condition.negated)
+              chip.append(
+                el(
+                  "small",
+                  `Через НЕ: исходное условие ${operators[condition.compare]} ${condition.threshold}% не выполнено.`,
+                ),
+              );
+            conditions.append(chip);
+          }
+          card.append(conditions);
+          preview.append(card);
         }
       } catch (error) {
         report(feedback, error);

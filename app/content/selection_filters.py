@@ -12,7 +12,7 @@ from app.models import (FilterApplication, FilterEvaluation, FilterMark, FilterM
                         PostFilterMark, SelectionFilter, SelectionFilterVersion, TaxonomyClassification,
                         TaxonomyRun, TelegramChat, TelegramPost)
 from app.taxonomy.jobs import text_sha256
-from app.content.selection_rules import evaluate, taxonomy_catalog
+from app.content.selection_rules import evaluate, matching_conditions, taxonomy_catalog
 
 logger = logging.getLogger(__name__)
 
@@ -160,11 +160,14 @@ async def preview(session, version):
                 counts["new_marks"] += 1
             if needs_backfill(job, post):
                 counts["backfill_needed"] += 1
-            # Сначала пригодные примеры с оценками. Первые карточки базы могут
-            # оказаться только медиа; они не должны вытеснять весь предпросмотр.
-            examples.append({"entry_id": entry.id, **values})
-            examples.sort(key=lambda item: ({"matched": 0, "rejected": 1, "unknown": 2}[item["outcome"]], item["entry_id"]))
-            del examples[12:]
+            # В предпросмотре только совпадения с актуальными оценками. Счётчики
+            # считаем по всей выборке, а тексты возвращаем ограниченным списком.
+            if values["outcome"] == "matched" and len(examples) < 12:
+                examples.append({"entry_id": entry.id, **values,
+                    "text": (post.text or "")[:500],
+                    "text_truncated": len(post.text or "") > 500,
+                    "model_version": job.model_version,
+                    "matching_conditions": matching_conditions(values["trace"])})
         last = ids[-1]
     return {**counts, "total": sum(counts[key] for key in ("matched", "rejected", "unknown")), "examples": examples}
 
