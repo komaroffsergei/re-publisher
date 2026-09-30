@@ -18,7 +18,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select, text
 
 from app.config import Settings, get_settings
-from app.content.pipeline_entries import PIPELINE_STAGE_LABELS
+from app.content.pipeline_stages import PIPELINE_STAGE_LABELS
 from app.content.selection_filters import application_loop, has_marks, load_states
 from app.content.selection_rules import taxonomy_catalog
 from app.content.source_marking import marked_post_text, telegram_post_source_url
@@ -563,7 +563,7 @@ def register_routes(app: FastAPI) -> None:
         if mark is not None:
             statement = statement.where(
                 PipelineEntry.id.in_(
-                    select(PostFilterMark.pipeline_entry_id).where(
+                    select(PostFilterMark.entry_id).where(
                         PostFilterMark.mark_id == mark, PostFilterMark.active.is_(True)
                     )
                 )
@@ -571,7 +571,7 @@ def register_routes(app: FastAPI) -> None:
         if selection_filter is not None:
             statement = statement.where(
                 PipelineEntry.id.in_(
-                    select(FilterMarkEvent.pipeline_entry_id)
+                    select(FilterMarkEvent.entry_id)
                     .join(
                         FilterEvaluation,
                         FilterEvaluation.id == FilterMarkEvent.evaluation_id,
@@ -582,10 +582,7 @@ def register_routes(app: FastAPI) -> None:
                     )
                     .join(
                         PostFilterMark,
-                        (
-                            PostFilterMark.pipeline_entry_id
-                            == FilterMarkEvent.pipeline_entry_id
-                        )
+                        (PostFilterMark.entry_id == FilterMarkEvent.entry_id)
                         & (PostFilterMark.mark_id == FilterMarkEvent.mark_id)
                         & PostFilterMark.active.is_(True),
                     )

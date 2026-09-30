@@ -580,6 +580,7 @@ async def test_current_pages_and_dashboard_match_database(db, client):
             message_id=1,
             text="Not MAX",
             is_deleted=False,
+            raw={},
         )
         session.add_all([other_chat, other_post])
         await session.flush()

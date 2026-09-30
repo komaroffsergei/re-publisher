@@ -1,0 +1,26 @@
+"""Current board stages, independent of the retired processing pipeline."""
+
+PIPELINE_STAGE_RECEIVED = "received"
+PIPELINE_STAGE_SORTED = "sorted"
+PIPELINE_STAGE_FILTERED = "filtered"
+PIPELINE_STAGE_MARKING = "marking"
+PIPELINE_STAGE_READY = "ready"
+PIPELINE_STAGE_PUBLISHED = "published"
+
+PIPELINE_STAGES = [
+    PIPELINE_STAGE_RECEIVED,
+    PIPELINE_STAGE_SORTED,
+    PIPELINE_STAGE_FILTERED,
+    PIPELINE_STAGE_MARKING,
+    PIPELINE_STAGE_READY,
+    PIPELINE_STAGE_PUBLISHED,
+]
+
+PIPELINE_STAGE_LABELS = {
+    PIPELINE_STAGE_RECEIVED: "Не готовы",
+    PIPELINE_STAGE_SORTED: "Отсортирован",
+    PIPELINE_STAGE_FILTERED: "Отфильтрован",
+    PIPELINE_STAGE_MARKING: "Маркировка",
+    PIPELINE_STAGE_READY: "Готов к публикации",
+    PIPELINE_STAGE_PUBLISHED: "Опубликован",
+}
