@@ -10,15 +10,9 @@ import numpy as np
 from scipy.sparse import hstack
 
 
+from app.taxonomy.labels import FEATURE_NAMES
+
 MODEL_VERSION = "codex-tfidf-maxplus1000-20260929"
-FEATURE_NAMES = {
-    "is_ad": "Реклама",
-    "is_event_related": "Про мероприятие",
-    "is_event_invitation": "Приглашение",
-    "is_job_vacancy": "Вакансия",
-    "is_scientific_paper": "Научная статья",
-    "is_joke": "Шутка",
-}
 
 
 def format_result(taxonomy: dict, scores: dict[str, float], complexity: float) -> dict:

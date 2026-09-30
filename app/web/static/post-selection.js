@@ -8,11 +8,18 @@
     container.dataset.selectionSignature=signature;body.replaceChildren();
     container.querySelector('[data-mark-count]').textContent=(state.marks||[]).length;
     for(const mark of state.marks||[]) {
-      const block=el('div',undefined,'post-mark');const chip=el('span',mark.name,'post-mark-chip');chip.style.borderColor=mark.color;
+      const block=el('div',undefined,'post-mark');
+      const latestByModel=new Map();
+      for(const source of mark.sources)if(source.assigned && !latestByModel.has(source.model_key))latestByModel.set(source.model_key,source);
+      const scores=Array.from(latestByModel.values()).map(source=>`${source.model_key==='tfidf' ? 'TF-IDF' : 'MiniLM'} ${(source.assigned.score*100).toFixed(2)}%${source.stale ? ' (прежний текст)' : ''}`);
+      const chip=el('span',`${mark.name}${scores.length ? ` · ${scores.join(' · ')}` : ''}`,'post-mark-chip');chip.style.borderColor=mark.color;
       const remove=el('button','Снять');remove.type='button';remove.dataset.removeMark=mark.id;remove.disabled=active;remove.setAttribute('aria-label',`Снять признак ${mark.name}`);
       block.append(chip,remove);
       const sources=el('details');sources.append(el('summary',`Основания · ${mark.sources.length}`));
-      for(const source of mark.sources) sources.append(el('p',`${source.name} · v${source.version} · ${source.model_key} · запуск #${source.run_id ?? '—'} · ${new Date(source.assigned_at).toLocaleString()}\n${source.reason}`,'selection-reason'));
+      for(const source of mark.sources) {
+        sources.append(el('p',`${source.name} · v${source.version} · ${source.model_key} · запуск #${source.run_id ?? '—'} · ${new Date(source.assigned_at).toLocaleString()}${source.stale ? ' · прежний текст' : ''}\n${source.reason}`,'selection-reason'));
+        for(const child of source.assigned?.subcategories || [])sources.append(el('p',`${child.name}: ${child.score==null ? 'нет оценки' : `${(child.score*100).toFixed(2)}%`}`,'selection-reason'));
+      }
       block.append(sources);body.append(block);
     }
     if(!state.marks?.length)body.append(el('p','Признаки не назначены.','muted'));

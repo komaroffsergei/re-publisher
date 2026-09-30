@@ -557,6 +557,7 @@ class FilterMark(TimestampMixin, Base):
     description: Mapped[str] = mapped_column(Text, server_default="", nullable=False)
     color: Mapped[str] = mapped_column(Text, server_default="#a78bfa", nullable=False)
     archived: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
+    label_id: Mapped[str | None] = mapped_column(Text, unique=True, nullable=True)
 
 
 class SelectionFilter(TimestampMixin, Base):
@@ -578,6 +579,7 @@ class SelectionFilterVersion(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     model_key: Mapped[str] = mapped_column(Text, nullable=False)
     mark_id: Mapped[int] = mapped_column(ForeignKey("filter_marks.id"), nullable=False)
+    assigned_label_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     expression: Mapped[dict] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

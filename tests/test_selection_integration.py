@@ -212,3 +212,53 @@ async def test_backfill_waits_for_other_model_without_losing_cursor(db, client):
         await session.commit()
     await finish_job(db, tfidf_id, result, 42)
     assert (await client.get(f"/api/pipeline/{entry_id}/marks")).json()["marks"]
+
+
+async def test_assign_model_label_scores_and_readonly_preview(db, client):
+    entry_id = await seed(db)
+    async with db() as session:
+        for job in (await session.execute(select(TaxonomyClassification))).scalars():
+            result = dict(job.result)
+            result["scores"] = {**result["scores"], "society": .543 if job.model_key == "tfidf" else .5831}
+            job.result = result
+        await session.commit()
+    for model, expected in (("tfidf", .543), ("minilm", .5831)):
+        draft = {"name": model, "model_key": model, "assigned_label_id": "society", "expression": {
+            "op": "condition", "label_id": "tool_description", "compare": "gte", "threshold": 60}}
+        response = await client.post("/api/pipeline/filters/preview", json=draft)
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["matched"] == 1
+        assert data["examples"][0]["trace"]["assigned"]["score"] == expected
+        assert len(data["examples"][0]["trace"]["assigned"]["subcategories"]) == 3
+        if model == "tfidf":
+            assert not (await client.get("/api/pipeline/marks")).json()["marks"]
+        response = await client.post("/api/pipeline/filters/apply", json={**draft, "preview_digest": data["preview_digest"]})
+        assert response.status_code == 200, response.text
+        await flush_apps(db)
+    marks = (await client.get(f"/api/pipeline/{entry_id}/marks")).json()["marks"]
+    assert len(marks) == 1 and marks[0]["label_id"] == "society"
+    assert {source["model_key"]: source["assigned"]["score"] for source in marks[0]["sources"]} == {"tfidf": .543, "minilm": .5831}
+    assert (await client.put(f"/api/pipeline/marks/{marks[0]['id']}", json={"name": "Wrong"})).status_code == 409
+    assert (await client.get(f"/api/pipeline/board-state?entry_ids={entry_id}")).json()["entries"][str(entry_id)]["stage"] == "filtered"
+    async with db() as session:
+        job = (await session.execute(select(TaxonomyClassification).where(TaxonomyClassification.model_key == "tfidf"))).scalar_one()
+        result = dict(job.result)
+        result["scores"] = {key: score for key, score in result["scores"].items() if key != "society"}
+        job.result = result
+        await session.commit()
+    draft["model_key"] = "tfidf"
+    data = (await client.post("/api/pipeline/filters/preview", json=draft)).json()
+    assert data["unknown"] == 1 and data["backfill_needed"] == 1
+    assert data["examples"][0]["trace"]["assigned"]["score"] is None
+
+
+async def test_target_validation_and_binary_feature(db, client):
+    await seed(db)
+    draft = {"name": "Feature", "assigned_label_id": "is_ad", "expression": {
+        "op": "condition", "label_id": "is_job_vacancy", "compare": "gte", "threshold": 60}}
+    response = await client.post("/api/pipeline/filters/preview", json=draft)
+    assert response.status_code == 200 and response.json()["matched"] == 1
+    for bad in ({**draft, "assigned_label_id": "unknown"}, {**draft, "mark_id": 1},
+                {"name": "Missing", "expression": draft["expression"]}):
+        assert (await client.post("/api/pipeline/filters/preview", json=bad)).status_code == 422

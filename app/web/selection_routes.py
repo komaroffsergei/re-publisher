@@ -9,12 +9,13 @@ from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects.postgresql import insert
 
 from app.content.selection_filters import load_states, preview, remove_mark, trace_text
-from app.content.selection_rules import taxonomy_catalog, validate_expression
+from app.content.selection_rules import taxonomy_catalog, validate_expression, label_name
 from app.models import (FilterApplication, FilterEvaluation, FilterMark, FilterMarkEvent, PipelineEntry, PostFilterMark,
                         SelectionFilter, SelectionFilterVersion, TaxonomyClassification, TelegramChat, TelegramPost)
 
@@ -42,11 +43,20 @@ class FilterInput(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     enabled: bool = True
     model_key: Literal["tfidf", "minilm"] = "tfidf"
-    mark_id: int = Field(gt=0)
+    assigned_label_id: str | None = None
+    mark_id: int | None = Field(default=None, gt=0)  # Совместимость сохранённых фильтров и прежнего API.
     expression: dict
     filter_id: int | None = None
     base_version_id: int | None = None
     preview_digest: str | None = None
+
+    @model_validator(mode="after")
+    def validate_target(self):
+        if (self.assigned_label_id is None) == (self.mark_id is None):
+            raise ValueError("Выберите назначаемую категорию или подкатегорию")
+        if self.assigned_label_id is not None and self.assigned_label_id not in {item["id"] for item in taxonomy_catalog()["labels"]}:
+            raise ValueError("Неизвестный признак модели")
+        return self
 
     @field_validator("name")
     @classmethod
@@ -79,9 +89,23 @@ async def input_data(request, model):
 
 
 async def check_mark(session, draft):
+    if draft.assigned_label_id is not None:
+        return
     mark = await session.get(FilterMark, draft.mark_id)
     if mark is None or (mark.archived and draft.enabled):
         raise HTTPException(409, "Выберите действующий признак из словаря")
+
+
+async def target_mark(session, label_id):
+    """Создаётся только при применении. Один ID категории общий для всех фильтров/моделей."""
+    name = label_name(label_id)
+    collision = (await session.execute(select(FilterMark.id).where(
+        FilterMark.name == name, FilterMark.label_id.is_(None)))).scalar_one_or_none()
+    if collision:
+        name = f"{name} [{label_id}]"
+    statement = insert(FilterMark).values(name=name, label_id=label_id, archived=False).on_conflict_do_update(
+        index_elements=[FilterMark.label_id], set_={"archived": False}).returning(FilterMark.id)
+    return (await session.execute(statement)).scalar_one()
 
 
 async def enqueue_application(session, version):
@@ -109,7 +133,8 @@ def register_filter_routes(app, require_auth, session_factory, templates):
             rows = (await session.execute(select(FilterMark, func.count(PostFilterMark.id)).outerjoin(
                 PostFilterMark, (PostFilterMark.mark_id == FilterMark.id) & PostFilterMark.active.is_(True))
                 .group_by(FilterMark.id).order_by(FilterMark.id))).all()
-            return {"marks": [{"id": mark.id, "name": mark.name, "description": mark.description,
+            return {"marks": [{"id": mark.id, "name": label_name(mark.label_id) if mark.label_id else mark.name,
+                "label_id": mark.label_id, "description": mark.description,
                 "color": mark.color, "archived": mark.archived, "count": count} for mark, count in rows]}
 
     @router.post("/api/pipeline/marks")
@@ -120,6 +145,8 @@ def register_filter_routes(app, require_auth, session_factory, templates):
             mark = await session.get(FilterMark, mark_id) if mark_id else FilterMark()
             if mark is None:
                 raise HTTPException(404, "Признак не найден")
+            if mark.label_id:
+                raise HTTPException(409, "Категория модели задаётся таксономией. Измените назначаемую категорию в фильтре.")
             if data.archived and (await session.execute(select(SelectionFilter.id).join(
                 SelectionFilterVersion, SelectionFilterVersion.id == SelectionFilter.active_version_id).where(
                 SelectionFilterVersion.mark_id == mark_id, SelectionFilter.enabled.is_(True),
@@ -156,7 +183,9 @@ def register_filter_routes(app, require_auth, session_factory, templates):
             return {"catalog": taxonomy_catalog(), "filters": [{"id": item.id, "name": item.name,
                 "enabled": item.enabled, "archived": item.archived, "base_version_id": version.id,
                 "number": version.number, "model_key": version.model_key, "mark_id": version.mark_id,
-                "mark_name": mark.name, "expression": version.expression, "matches": matches.get(version.id, 0),
+                "assigned_label_id": version.assigned_label_id,
+                "mark_name": label_name(version.assigned_label_id) if version.assigned_label_id else mark.name,
+                "expression": version.expression, "matches": matches.get(version.id, 0),
                 "application": applications.get(version.id)} for item, version, mark in rows]}
 
     @router.post("/api/pipeline/filters/preview")
@@ -164,7 +193,11 @@ def register_filter_routes(app, require_auth, session_factory, templates):
         draft = await input_data(request, FilterInput)
         async with session_factory(request)() as session:
             await check_mark(session, draft)
-            result = await preview(session, SimpleNamespace(**draft.model_dump()))
+            values = draft.model_dump()
+            if draft.assigned_label_id:
+                values["mark_id"] = (await session.execute(select(FilterMark.id).where(
+                    FilterMark.label_id == draft.assigned_label_id))).scalar_one_or_none()
+            result = await preview(session, SimpleNamespace(**values))
             return {**result, "preview_digest": digest(draft)}
 
     @router.post("/api/pipeline/filters/apply")
@@ -188,8 +221,9 @@ def register_filter_routes(app, require_auth, session_factory, templates):
             item.updated_at = datetime.now(timezone.utc)
             session.add(item)
             await session.flush()
+            mark_id = await target_mark(session, draft.assigned_label_id) if draft.assigned_label_id else draft.mark_id
             version = SelectionFilterVersion(filter_id=item.id, number=number, name=draft.name,
-                model_key=draft.model_key, mark_id=draft.mark_id, expression=draft.expression)
+                model_key=draft.model_key, mark_id=mark_id, assigned_label_id=draft.assigned_label_id, expression=draft.expression)
             session.add(version)
             await session.flush()
             item.active_version_id = version.id

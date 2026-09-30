@@ -12,7 +12,7 @@ from app.models import (FilterApplication, FilterEvaluation, FilterMark, FilterM
                         PostFilterMark, SelectionFilter, SelectionFilterVersion, TaxonomyClassification,
                         TaxonomyRun, TelegramChat, TelegramPost)
 from app.taxonomy.jobs import text_sha256
-from app.content.selection_rules import evaluate, taxonomy_catalog
+from app.content.selection_rules import evaluate, taxonomy_catalog, label_name
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +50,16 @@ def assessment(version, job, post):
         if not scores:
             reason = "Нужно обновить полный набор оценок"
     result, trace = evaluate(version.expression, scores)
+    target = getattr(version, "assigned_label_id", None)
+    if target:
+        def score_for(label):
+            _valid, assessed = evaluate({"op": "condition", "label_id": label, "compare": "gte", "threshold": 0}, scores)
+            return assessed["score"]
+        trace["assigned"] = {"label_id": target, "name": label_name(target), "score": score_for(target),
+            "subcategories": [{"label_id": item["id"], "name": item["name"], "score": score_for(item["id"])}
+                              for item in taxonomy_catalog()["labels"] if item["parent"] == target]}
+        if trace["assigned"]["score"] is None and not reason:
+            reason = "Нет оценки назначаемого признака"
     if reason:
         result = None
         trace["reason"] = reason
@@ -158,7 +168,7 @@ async def preview(session, version):
             counts[values["outcome"]] += 1
             if values["outcome"] == "matched" and entry.id not in marked:
                 counts["new_marks"] += 1
-            if needs_backfill(job, post):
+            if needs_backfill(job, post, getattr(version, "assigned_label_id", None)):
                 counts["backfill_needed"] += 1
             if len(examples) < 12:
                 examples.append({"entry_id": entry.id, **values})
@@ -166,7 +176,7 @@ async def preview(session, version):
     return {**counts, "total": sum(counts[key] for key in ("matched", "rejected", "unknown")), "examples": examples}
 
 
-def needs_backfill(job, post):
+def needs_backfill(job, post, assigned_label_id=None):
     if not (post.text or "").strip() or post.is_deleted:
         return False
     if job is None:
@@ -174,7 +184,10 @@ def needs_backfill(job, post):
     current_text = job.text_sha256 == text_sha256(post.text)
     if job.status in {"queued", "running"} and current_text:
         return False  # Завершение уже поставленного запуска проверит включённые фильтры.
-    return (job.status != "complete" or not current_text or not (job.result or {}).get("scores")
+    scores = (job.result or {}).get("scores") or {}
+    target_missing = assigned_label_id and evaluate({"op": "condition", "label_id": assigned_label_id,
+        "compare": "gte", "threshold": 0}, scores)[0] is None
+    return (job.status != "complete" or not current_text or not scores or bool(target_missing)
             or (job.result or {}).get("taxonomy_version") != taxonomy_catalog()["version"])
 
 
@@ -205,7 +218,7 @@ async def application_batch(factory):
                     TaxonomyClassification.pipeline_entry_id == entry.id,
                     TaxonomyClassification.model_key == version.model_key))).scalar_one_or_none()
                 values = await evaluate_post(session, entry, post, version, f"apply:{application.id}", job)
-                if needs_backfill(job, post):
+                if needs_backfill(job, post, version.assigned_label_id):
                     try:
                         await enqueue(session, entry.id, version.model_key)
                         application.backfilled += 1
@@ -253,9 +266,15 @@ def trace_text(trace):
     if trace["op"] == "condition":
         sign = {"gte": "≥", "gt": ">", "lte": "≤", "lt": "<"}[trace["compare"]]
         actual = "нет оценки" if trace["score"] is None else f"{trace['score'] * 100:.1f}%"
-        return f"{names.get(trace['label_id'], trace['label_id'])} {sign} {trace['threshold']:g}% (оценка: {actual})"
-    children = [trace_text(child) for child in trace.get("children", [])]
-    return f"НЕ ({children[0]})" if trace["op"] == "not" else "(" + (" И " if trace["op"] == "and" else " ИЛИ ").join(children) + ")"
+        text = f"{names.get(trace['label_id'], trace['label_id'])} {sign} {trace['threshold']:g}% (оценка: {actual})"
+    else:
+        children = [trace_text(child) for child in trace.get("children", [])]
+        text = f"НЕ ({children[0]})" if trace["op"] == "not" else "(" + (" И " if trace["op"] == "and" else " ИЛИ ").join(children) + ")"
+    assigned = trace.get("assigned")
+    if assigned:
+        score = "нет оценки" if assigned["score"] is None else f"{assigned['score'] * 100:.2f}%"
+        text += f" → {assigned['name']}: оценка модели {score}"
+    return text
 
 
 async def load_states(session, entries: dict):
@@ -266,7 +285,8 @@ async def load_states(session, entries: dict):
     for assignment, mark in (await session.execute(select(PostFilterMark, FilterMark).join(
         FilterMark, FilterMark.id == PostFilterMark.mark_id).where(PostFilterMark.entry_id.in_(ids),
         PostFilterMark.active.is_(True)))).all():
-        result[assignment.entry_id]["marks"].append({"id": mark.id, "name": mark.name, "color": mark.color,
+        result[assignment.entry_id]["marks"].append({"id": mark.id, "label_id": mark.label_id,
+            "name": label_name(mark.label_id) if mark.label_id else mark.name, "color": mark.color,
             "archived": mark.archived, "assigned_at": assignment.assigned_at.isoformat(), "sources": []})
     sources = (await session.execute(select(FilterMarkEvent, FilterEvaluation, SelectionFilterVersion).join(
         FilterEvaluation, FilterEvaluation.id == FilterMarkEvent.evaluation_id).join(
@@ -282,6 +302,8 @@ async def load_states(session, entries: dict):
             if mark["id"] == event.mark_id:
                 mark["sources"].append({"filter_id": version.filter_id, "name": version.name,
                     "version": version.number, "model_key": version.model_key, "run_id": evaluation.run_id,
+                    "assigned": evaluation.trace.get("assigned"),
+                    "stale": evaluation.text_sha256 != text_sha256(entries[event.entry_id][2].text),
                     "assigned_at": event.created_at.isoformat(), "reason": trace_text(evaluation.trace)})
     versions = (await session.execute(select(SelectionFilterVersion).join(SelectionFilter,
         SelectionFilter.active_version_id == SelectionFilterVersion.id).where(
@@ -294,5 +316,6 @@ async def load_states(session, entries: dict):
             values = assessment(version, jobs.get((entry_id, version.model_key)), post)
             result[entry_id]["checks"].append({"filter_id": version.filter_id, "name": version.name,
                 "version": version.number, "model_key": version.model_key, "outcome": values["outcome"],
+                "assigned": values["trace"].get("assigned"),
                 "reason": trace_text(values["trace"])})
     return result

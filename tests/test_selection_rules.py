@@ -88,3 +88,20 @@ def test_absent_stale_or_failed_selected_model_needs_backfill():
     assert not needs_backfill(None, post)
     post.text = "Text"; post.is_deleted = True
     assert not needs_backfill(None, post)
+
+
+def test_assigned_label_uses_own_score_and_missing_is_unknown():
+    post = SimpleNamespace(text="Text", is_deleted=False)
+    job = SimpleNamespace(status="complete", current_run_id=1, text_sha256=text_sha256(post.text),
+        result={"taxonomy_version": taxonomy_catalog()["version"], "scores": {"tool_description": .8, "society": .42}})
+    version = SimpleNamespace(expression=leaf(), assigned_label_id="society")
+    result = assessment(version, job, post)
+    assert result["outcome"] == "matched" and result["trace"]["assigned"]["score"] == .42
+    del job.result["scores"]["society"]
+    assert assessment(version, job, post)["outcome"] == "unknown"
+    assert needs_backfill(job, post, "society")
+
+
+def test_catalog_contains_all_model_scores():
+    assert len(taxonomy_catalog()["labels"]) == 38
+    assert evaluate(validate_expression(leaf("is_ad")), {"is_ad": .8})[0] is True

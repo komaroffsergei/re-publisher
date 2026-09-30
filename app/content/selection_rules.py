@@ -5,6 +5,7 @@ import json
 import math
 from pathlib import Path
 from functools import lru_cache
+from app.taxonomy.labels import FEATURE_NAMES
 
 
 @lru_cache(maxsize=1)
@@ -14,7 +15,15 @@ def taxonomy_catalog() -> dict:
               for category in taxonomy["categories"]]
     labels += [{"id": child["id"], "name": child["name"], "parent": category["id"]}
                for category in taxonomy["categories"] for child in category["subcategories"]]
+    labels += [{"id": key, "name": FEATURE_NAMES[key], "parent": None, "kind": "feature"}
+               for key in taxonomy["binary_features"]]
     return {"version": taxonomy["version"], "labels": labels}
+
+
+def label_name(label_id):
+    labels = {label["id"]: label for label in taxonomy_catalog()["labels"]}
+    item = labels[label_id]
+    return f"{labels[item['parent']]['name']} / {item['name']}" if item["parent"] else item["name"]
 
 
 def validate_expression(expression: dict) -> dict:
