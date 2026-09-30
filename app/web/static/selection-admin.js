@@ -98,6 +98,8 @@
     form.elements.mark_id.add(new Option('Выбери признак',''));
     for(const mark of marks) form.elements.mark_id.add(new Option(`${mark.name}${mark.archived ? ' · архивный' : ''}`,mark.id));
     await load();reset();
+    document.getElementById('filter-fields').disabled=false;
+    document.getElementById('filter-new').disabled=false;
     if(!marks.some(mark=>!mark.archived)){feedback.textContent='Словарь пустой. Добавь признак на странице «Признаки».';document.getElementById('filter-preview').disabled=true;}
     window.setInterval(()=>load().catch(error=>report(feedback,error)),5000);
   }
