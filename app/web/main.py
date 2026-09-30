@@ -60,6 +60,19 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 BOARD_STAGES = ("received", "sorted", "filtered", "marking")
 
 
+def display_time(value):
+    if not value:
+        return "—"
+    return (
+        datetime.fromisoformat(value)
+        .astimezone(ZoneInfo("Europe/Moscow"))
+        .strftime("%d.%m.%Y · %H:%M")
+    )
+
+
+templates.env.filters["display_time"] = display_time
+
+
 def now_moscow_iso():
     return datetime.now(ZoneInfo("Europe/Moscow")).isoformat()
 

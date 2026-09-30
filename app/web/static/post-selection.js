@@ -21,6 +21,8 @@
     const counter = container.querySelector("[data-mark-count]");
     if (counter) counter.textContent = (state.marks || []).length;
     const compact = container.dataset.compact === "true";
+    const heading = container.querySelector("h3");
+    if (heading) heading.hidden = !(state.marks || []).length;
     if (compact) {
       for (const mark of state.marks || []) {
         const chip = el("span", mark.name, "post-mark-chip");
@@ -61,13 +63,11 @@
       block.append(sources);
       body.append(block);
     }
-    if (!state.marks?.length)
-      body.append(el("p", "Признаки не назначены.", "muted"));
     const checks = el("details");
     checks.append(
       el("summary", `Проверки фильтров · ${(state.checks || []).length}`),
     );
-    body.append(checks);
+    if (state.checks?.length) body.append(checks);
     if (!state.checks?.length)
       checks.append(el("p", "Нет включённых фильтров.", "muted"));
     for (const check of state.checks || []) {
@@ -87,7 +87,7 @@
     feedback.setAttribute("role", "status");
     body.append(feedback);
     const history = el("details");
-    history.append(el("summary", "История назначений и снятий"));
+    history.append(el("summary", "История лейблов"));
     history.addEventListener("toggle", async () => {
       if (!history.open || history.dataset.loaded) return;
       try {

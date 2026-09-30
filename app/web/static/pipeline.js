@@ -44,6 +44,13 @@
         const uncertainty =
           job.result?.review_status === "needs_review" ? " · Не уверен" : "";
         line.textContent = `${names[key]} · ${statuses[job.status] || job.status}${uncertainty}${job.elapsed_ms == null ? "" : ` · ${job.elapsed_ms} мс`}`;
+        if (!detail && job.result?.top_3?.length) {
+          const category = job.result.top_3[0];
+          const score = document.createElement("small");
+          score.textContent = `${category.name} · ${Math.round(category.score * 100)}%`;
+          score.title = "Оценка модели, не вероятность правильного ответа";
+          line.append(document.createElement("br"), score);
+        }
         if (job.error) {
           const error = document.createElement("span");
           error.textContent = job.error;
