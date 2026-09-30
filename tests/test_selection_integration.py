@@ -54,11 +54,17 @@ async def client(db):
         get_settings.cache_clear()
 
 
-async def seed(factory, legacy=False):
+async def seed(factory, legacy=False, empty_first=0):
     async with factory() as session:
         chat = TelegramChat(peer_id=-1001234567890, title="QA chat", username="selection_qa", chat_type="channel", folder_name="MAX")
         post = TelegramPost(chat_peer_id=chat.peer_id, message_id=1, text="QA sample", date=datetime.now(timezone.utc), is_deleted=False, raw={})
         session.add_all([chat, post]); await session.flush()
+        for index in range(empty_first):
+            media_post = TelegramPost(chat_peer_id=chat.peer_id, message_id=index + 2, text=None,
+                date=datetime.now(timezone.utc), is_deleted=False, raw={})
+            session.add(media_post); await session.flush()
+            session.add(PipelineEntry(source_post_id=media_post.id, stage="sorted", status="taxonomy_sorted"))
+        await session.flush()
         entry = PipelineEntry(source_post_id=post.id, stage="sorted", status="taxonomy_sorted")
         session.add(entry); await session.flush()
         scores = dict.fromkeys((label["id"] for label in taxonomy_catalog()["labels"]), .8)
@@ -262,3 +268,16 @@ async def test_target_validation_and_binary_feature(db, client):
     for bad in ({**draft, "assigned_label_id": "unknown"}, {**draft, "mark_id": 1},
                 {"name": "Missing", "expression": draft["expression"]}):
         assert (await client.post("/api/pipeline/filters/preview", json=bad)).status_code == 422
+
+
+async def test_preview_keeps_scored_post_after_many_media_cards(db, client):
+    entry_id = await seed(db, empty_first=13)
+    draft = {"name": "Scored example", "assigned_label_id": "society", "expression": {
+        "op": "condition", "label_id": "society", "compare": "gte", "threshold": 60}}
+    response = await client.post("/api/pipeline/filters/preview", json=draft)
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["total"] == 14 and data["unknown"] == 13 and data["matched"] == 1
+    assert len(data["examples"]) == 12
+    assert data["examples"][0]["entry_id"] == entry_id
+    assert data["examples"][0]["trace"]["assigned"]["score"] == .8

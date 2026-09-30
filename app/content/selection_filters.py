@@ -170,8 +170,11 @@ async def preview(session, version):
                 counts["new_marks"] += 1
             if needs_backfill(job, post, getattr(version, "assigned_label_id", None)):
                 counts["backfill_needed"] += 1
-            if len(examples) < 12:
-                examples.append({"entry_id": entry.id, **values})
+            # Сначала пригодные примеры с оценками. Первые карточки базы могут
+            # оказаться только медиа; они не должны вытеснять весь предпросмотр.
+            examples.append({"entry_id": entry.id, **values})
+            examples.sort(key=lambda item: ({"matched": 0, "rejected": 1, "unknown": 2}[item["outcome"]], item["entry_id"]))
+            del examples[12:]
         last = ids[-1]
     return {**counts, "total": sum(counts[key] for key in ("matched", "rejected", "unknown")), "examples": examples}
 
