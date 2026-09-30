@@ -428,7 +428,7 @@
       submit.disabled = true;
       dirty();
       try {
-        const requestDraft = draft();
+        const requestDraft = structuredClone(draft());
         const data = await api("/api/pipeline/filters/preview", requestDraft);
         if (JSON.stringify(requestDraft) !== JSON.stringify(draft())) {
           feedback.textContent = "Условия изменились. Обнови предпросмотр.";
