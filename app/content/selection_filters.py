@@ -82,7 +82,7 @@ async def assign_mark(session, entry, version, evaluation, context: str):
         assignment.assigned_at = now
         assignment.removed_at = None
     session.add(FilterMarkEvent(entry_id=entry.id, mark_id=mark.id, evaluation_id=evaluation.id,
-                               action="assigned", dedup_key=dedup_key))
+                               action="assigned", dedup_key=dedup_key, created_at=now))
     await session.flush()
     await preserve_mark_stage(session, entry)
 

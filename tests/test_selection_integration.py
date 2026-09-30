@@ -111,6 +111,8 @@ async def test_multiple_filters_sticky_marks_remove_and_reapply(db, client):
     state = (await client.get(f"/api/pipeline/board-state?entry_ids={entry_id}")).json()["entries"][str(entry_id)]
     assert state["stage"] == "filtered" and len(state["selection"]["marks"]) == 2
     assert len(state["selection"]["marks"][0]["sources"]) == 2
+    filtered_board = await client.get(f"/pipeline?mark={marks[0]}&selection_filter={a['id']}")
+    assert filtered_board.status_code == 200 and "QA sample" in filtered_board.text
     rules = (await client.get("/api/pipeline/filters")).json()["filters"]
     await save_rule(client, marks[0], "A", threshold=99, item=next(rule for rule in rules if rule["id"] == a["id"]))
     await flush_apps(db)

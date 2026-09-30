@@ -1609,7 +1609,7 @@ def register_routes(app: FastAPI) -> None:
                         PostFilterMark, (PostFilterMark.entry_id == FilterMarkEvent.entry_id)
                             & (PostFilterMark.mark_id == FilterMarkEvent.mark_id)).where(
                         SelectionFilterVersion.filter_id == selected_filter, FilterMarkEvent.action == "assigned",
-                        PostFilterMark.active.is_(True), FilterMarkEvent.created_at >= PostFilterMark.assigned_at)))
+                        PostFilterMark.active.is_(True))))
                 if filters["genre"]:
                     conditions.append(PipelineEntry.genre_primary == filters["genre"])
                 if filters["eligible"] == "yes":
