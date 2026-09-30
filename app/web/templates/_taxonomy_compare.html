@@ -1,9 +1,18 @@
-<div class="taxonomy-comparison" data-taxonomy-compare="{{ compare_entry_id }}">
-  <p class="taxonomy-info" data-compare-count>Загрузка прогонов…</p>
-  <div class="compare-pickers">
-    <label>MiniLM<select data-compare-select="minilm" aria-label="Выбрать прогон MiniLM"></select></label>
-    <label>TF-IDF<select data-compare-select="tfidf" aria-label="Выбрать прогон TF-IDF"></select></label>
-  </div>
-  <div data-compare-output aria-live="polite"></div>
-  <button type="button" class="compare-more" data-compare-more hidden>Показать старые прогоны</button>
+<div class="taxonomy-comparison"
+     data-taxonomy-compare="{{ compare_entry_id }}">
+    <p class="taxonomy-info" data-compare-count>Загрузка прогонов…</p>
+    <div class="compare-pickers">
+        <label>
+            MiniLM<select data-compare-select="minilm" aria-label="Выбрать прогон MiniLM"></select>
+        </label>
+        <label>
+            TF-IDF<select data-compare-select="tfidf" aria-label="Выбрать прогон TF-IDF"></select>
+        </label>
+    </div>
+    <label class="checkbox-row">
+        <input type="checkbox" data-compare-all>
+        Все категории и подкатегории
+    </label>
+    <div data-compare-output aria-live="polite"></div>
+    <button type="button" class="compare-more" data-compare-more hidden>Показать старые прогоны</button>
 </div>

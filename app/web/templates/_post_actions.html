@@ -1,0 +1,4 @@
+<div class="model-actions">{% for key,name in [('tfidf','TF-IDF'),('minilm','MiniLM')] %}<button type="button"
+        data-taxonomy="{{ key }}"
+        data-model-enabled="{{ 'true' if request.app.state.settings.taxonomy_enabled else 'false' }}"
+        {% if state.active or state.deleted or not request.app.state.settings.taxonomy_enabled %}disabled{% endif %}>{{ name }} →</button>{% endfor %}</div><div class="model-statuses" data-model-statuses></div>

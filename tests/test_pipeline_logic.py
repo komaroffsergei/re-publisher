@@ -25,7 +25,7 @@ from app.content.pipeline_entries import (
 from app.content.link_materials import LINK_SUMMARY_FAILED_STATUS, LINK_SUMMARY_PENDING_STATUS
 from app.content.pipeline_rewriter import composed_max_text_size, fit_body_to_max_text_limit
 from app.content.pipeline_activity import active_state_phase
-from app.web.main import content_state_activity, parse_entry_ids
+from app.web.main import parse_entry_ids
 
 
 def test_axes_from_label_scores_accepts_nested_and_flat_values():
@@ -232,17 +232,6 @@ def test_rewrite_body_fit_preserves_source_link_and_max_limit():
 
 def test_pipeline_board_entry_id_parser_deduplicates_and_ignores_noise():
     assert parse_entry_ids("1, 2, x, 2; 3, -4, 0") == [1, 2, 3]
-
-
-def test_content_state_activity_uses_running_operation_not_pending_default():
-    pending_state = SimpleNamespace(processing_status="pending", summary_status="pending")
-    running_state = SimpleNamespace(processing_status="done", summary_status="running")
-
-    assert content_state_activity(pending_state) is None
-    activity = content_state_activity(running_state)
-    assert activity is not None
-    assert activity["active_kind"] == "collector"
-    assert activity["phase"] == "summarize_links"
 
 
 def test_active_state_phase_reports_first_running_pipeline_field():
