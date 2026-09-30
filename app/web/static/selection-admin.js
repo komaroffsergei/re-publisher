@@ -428,7 +428,12 @@
       submit.disabled = true;
       dirty();
       try {
-        const data = await api("/api/pipeline/filters/preview", draft());
+        const requestDraft = draft();
+        const data = await api("/api/pipeline/filters/preview", requestDraft);
+        if (JSON.stringify(requestDraft) !== JSON.stringify(draft())) {
+          feedback.textContent = "Условия изменились. Обнови предпросмотр.";
+          return;
+        }
         previewDigest = data.preview_digest;
         apply.disabled = false;
         feedback.textContent =
