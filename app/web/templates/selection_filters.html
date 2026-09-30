@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="toolbar"><div><h1>Фильтры отбора</h1><p class="muted">Все включённые фильтры проверяются независимо. Совпадение назначает категорию или признак модели с оценкой для этого поста.</p></div></section>
+<section class="toolbar"><div><h1>Фильтры отбора</h1><p class="muted">Все включённые фильтры проверяются независимо. Условия проверяют оценки категорий, подкатегорий и обязательных признаков модели. Совпавшему посту назначается твой лейбл из словаря.</p></div></section>
 <div class="selection-layout filters-layout">
   <section><div class="selection-actions"><button id="filter-new" type="button" disabled>Новый фильтр</button><a href="/pipeline">Конвейер →</a></div><div id="filters-list" aria-label="Сохранённые фильтры"></div></section>
   <article id="filter-editor"><h2 id="filter-form-heading">Новый фильтр</h2>
@@ -12,12 +12,8 @@
         <label class="checkbox-row"><input name="enabled" type="checkbox" checked> Включён</label>
       </div>
       <h3>Назначаемый признак</h3>
-      <div class="selection-fields">
-        <label>Категория / признак<select name="assigned_category" aria-label="Назначаемая категория" required></select></label>
-        <label>Подкатегория<select name="assigned_subcategory" aria-label="Назначаемая подкатегория" required></select></label>
-      </div>
-      <p id="assigned-score" class="muted">Оценка модели появится после предпросмотра.</p>
-      <p class="muted">* — без ограничения по подкатегории: назначается общая категория с её оценкой. Выбранная подкатегория получает свою оценку. Числа TF-IDF и MiniLM хранятся отдельно.</p>
+      <label>Лейбл из словаря<select name="mark_id" aria-label="Назначаемый признак" required></select></label>
+      <p class="muted">Обычный лейбл, который ты создаёшь в <a href="/marks">словаре признаков</a>. У лейбла нет оценки модели. Числа используются только в условиях ниже.</p>
       <h3>Условия</h3><p class="muted">Проценты — оценки модели, не вероятность правильного ответа. При * сравнивается оценка общей категории. НЕ без оценки не считается совпадением.</p>
       <div id="rule-builder" aria-label="Конструктор условий"></div>
       <div class="selection-actions"><button type="submit" id="filter-preview">Предпросмотр</button><button type="button" id="filter-apply" disabled>Применить</button><button type="button" id="filter-cancel">Сбросить редактор</button></div>
@@ -27,5 +23,5 @@
     <p class="muted">Новая версия применяется к старым карточкам партиями. Недостающий полный набор оценок досчитывается выбранной моделью. Сохранённые признаки снимаются только вручную.</p>
   </article>
 </div>
-<script src="/static/selection-admin.js?v=20260930-3" defer></script>
+<script src="/static/selection-admin.js?v=20260930-4" defer></script>
 {% endblock %}

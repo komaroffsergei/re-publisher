@@ -18,12 +18,11 @@
     document.getElementById('mark-new').onclick = reset;
     async function load() {
       const {marks} = await api('/api/pipeline/marks'); const list=document.getElementById('marks-list'); list.replaceChildren();
-      if (!marks.length) list.append(el('article', 'Назначаемые категории появятся здесь после применения фильтров. Все категории модели уже доступны в конструкторе.'));
+      if (!marks.length) list.append(el('article', 'Словарь пока пустой. Создай свой лейбл в форме слева.'));
       for (const mark of marks) {
         const row=el('article'); const heading=el('h2',mark.name); heading.style.borderLeft=`5px solid ${mark.color}`; heading.style.paddingLeft='10px';
         row.append(heading, el('p',mark.description || 'Без описания','muted'), el('p',`ID ${mark.id} · ${mark.count} постов${mark.archived ? ' · архивный' : ''}`));
-        if(mark.label_id)row.append(el('p',`Категория модели · ${mark.label_id}`,'muted'));
-        else row.append(button('Редактировать', () => {selected=mark.id;form.closest('article').hidden=false; for (const field of ['name','description','color']) form.elements[field].value=mark[field]; form.elements.archived.checked=mark.archived; document.getElementById('mark-form-heading').textContent=`Признак #${mark.id}`; form.elements.name.focus();}));
+        row.append(button('Редактировать', () => {selected=mark.id; for (const field of ['name','description','color']) form.elements[field].value=mark[field]; form.elements.archived.checked=mark.archived; document.getElementById('mark-form-heading').textContent=`Признак #${mark.id}`; form.elements.name.focus();}));
         list.append(row);
       }
     }
@@ -37,10 +36,9 @@
   async function filtersPage() {
     const form=document.getElementById('filter-form'); if (!form) return;
     const feedback=document.getElementById('filters-feedback'); const preview=document.getElementById('filter-preview-result');
-    const apply=document.getElementById('filter-apply'); let catalog=[], filters=[], edited=null, previewDigest=null;
+    const apply=document.getElementById('filter-apply'); let catalog=[], filters=[], marks=[], edited=null, previewDigest=null;
     let expression={op:'and',children:[]};
     const dirty=() => {previewDigest=null; apply.disabled=true; preview.replaceChildren();
-      document.getElementById('assigned-score').textContent='Оценка модели появится после предпросмотра.';
       document.querySelectorAll('[data-rule-score]').forEach(node=>{node.textContent='Оценка модели появится после предпросмотра.';});};
     const condition=()=>({op:'condition',label_id:catalog[0]?.id || '',compare:'gte',threshold:60});
     const label=(name, control) => {const node=el('label',name); node.append(control); return node;};
@@ -48,7 +46,11 @@
       const wrapper=el('div',undefined,node.op==='condition' ? 'rule-condition' : 'rule-group');
       if (node.op==='condition') {
         const category=el('select'); category.setAttribute('aria-label','Категория');
-        for (const item of catalog.filter(item=>!item.parent)) category.add(new Option(`${item.name}${item.kind==='feature' ? ' · признак' : ''}`,item.id));
+        for(const [kind,title] of [['category','Категории'],['feature','Обязательные признаки модели']]) {
+          const group=el('optgroup');group.label=title;
+          for(const item of catalog.filter(item=>!item.parent && (item.kind || 'category')===kind))group.append(new Option(item.name,item.id));
+          category.append(group);
+        }
         const selected=catalog.find(item=>item.id===node.label_id);
         category.value=selected?.parent || selected?.id || catalog[0]?.id || '';
         const subcategory=el('select'); subcategory.setAttribute('aria-label','Подкатегория');
@@ -56,6 +58,7 @@
           subcategory.replaceChildren(new Option('* — все подкатегории','*'));
           for(const item of catalog.filter(item=>item.parent===category.value)) subcategory.add(new Option(item.name,item.id));
           subcategory.value=node.label_id===category.value ? '*' : node.label_id;
+          subcategory.disabled=subcategory.options.length===1;
         }
         drawSubcategories();
         category.onchange=()=>{node.label_id=category.value;drawSubcategories();dirty();};
@@ -83,32 +86,29 @@
       return wrapper;
     }
     function draw() {document.getElementById('rule-builder').replaceChildren(drawTree(expression));}
-    const assignedCategory=form.elements.assigned_category, assignedSubcategory=form.elements.assigned_subcategory;
-    function assignedLabel() {return assignedSubcategory.value==='*' ? assignedCategory.value : assignedSubcategory.value;}
-    function drawAssignedSubcategories(labelId=assignedCategory.value) {
-      assignedSubcategory.replaceChildren(new Option('* — все подкатегории','*'));
-      for(const item of catalog.filter(item=>item.parent===assignedCategory.value)) assignedSubcategory.add(new Option(item.name,item.id));
-      assignedSubcategory.value=labelId===assignedCategory.value ? '*' : labelId;
+    const assignedMark=form.elements.mark_id;
+    assignedMark.onchange=dirty;
+    function drawMarks(selectedId=assignedMark.value) {
+      assignedMark.replaceChildren(new Option('Выбери лейбл из словаря',''));
+      for(const mark of marks)if(!mark.archived || String(mark.id)===String(selectedId))assignedMark.add(new Option(`${mark.name}${mark.archived ? ' · архивный' : ''}`,String(mark.id)));
+      assignedMark.value=String(selectedId || '');
     }
-    assignedCategory.onchange=()=>{drawAssignedSubcategories();dirty();};
-    assignedSubcategory.onchange=dirty;
     function reset(item=null, copy=false) {
       edited=item && !copy ? item : null;form.reset();form.elements.enabled.checked=item?.enabled ?? true;
       form.elements.name.value=item ? `${item.name}${copy ? ' — копия' : ''}` : '';
       form.elements.model_key.value=item?.model_key || 'tfidf';
-      const target=catalog.find(label=>label.id===item?.assigned_label_id) || catalog[0];
-      assignedCategory.value=target.parent || target.id;drawAssignedSubcategories(target.id);
+      drawMarks(item?.mark_id);
       expression=item ? structuredClone(item.expression) : {op:'and',children:[condition()]};
       document.getElementById('filter-form-heading').textContent=edited ? `Фильтр #${edited.id} · версия ${edited.number}` : 'Новый фильтр';
       feedback.textContent='';feedback.className='';dirty();draw();
-      if(item && !item.assigned_label_id)feedback.textContent=`Ранее назначался пользовательский признак «${item.mark_name}». При сохранении новой версии будет назначаться выбранная категория модели.`;
+      if(!marks.some(mark=>!mark.archived))feedback.textContent='Словарь пустой. Сначала создай лейбл на странице «Признаки».';
     }
     function draft() {return {name:form.elements.name.value, enabled:form.elements.enabled.checked, model_key:form.elements.model_key.value,
-      assigned_label_id:assignedLabel(), expression, filter_id:edited?.id || null, base_version_id:edited?.base_version_id || null};}
+      mark_id:Number(assignedMark.value), expression, filter_id:edited?.id || null, base_version_id:edited?.base_version_id || null};}
     async function load() {
-      const data=await api('/api/pipeline/filters');filters=data.filters;catalog=data.catalog.labels;
+      const [data, dictionary]=await Promise.all([api('/api/pipeline/filters'),api('/api/pipeline/marks')]);filters=data.filters;catalog=data.catalog.labels;marks=dictionary.marks;drawMarks();
       const list=document.getElementById('filters-list');list.replaceChildren();
-      if (!filters.length) list.append(el('article','Фильтров пока нет. Выбери назначаемую категорию и задай условия.'));
+      if (!filters.length) list.append(el('article','Фильтров пока нет. Выбери лейбл из словаря и задай условия по оценкам модели.'));
       for (const item of filters) {
         const row=el('article');if(item.archived) row.className='selection-archived';row.append(el('h2',item.name), el('p',`${item.archived ? 'Архивный' : item.enabled ? 'Включён' : 'Отключён'} · ${item.model_key==='tfidf' ? 'TF-IDF' : 'MiniLM'} · версия ${item.number}`),el('p',`Признак: ${item.mark_name} · текущих совпадений: ${item.matches}`));
         if(item.application) {const job=item.application;const statuses={queued:'В очереди',running:'Применяется',complete:'Применено',cancelled:'Остановлено новой настройкой',failed:'Ошибка пересчёта'};row.append(el('p',`${statuses[job.status] || job.status} · проверено ${job.processed} · совпало ${job.matched} · без оценки ${job.unknown} · досчитать ${job.backfilled}${job.error ? ` · ${job.error}. Примени настройки повторно.` : ''}`,'muted'));}
@@ -131,8 +131,6 @@
           function read(trace){if(trace.op==='condition')scores.set(trace.label_id,trace.score);else trace.children?.forEach(read);}
           read(example.trace);
           document.querySelectorAll('[data-rule-score]').forEach(node=>{node.textContent=`Пост #${example.entry_id} · ${form.elements.model_key.value==='tfidf' ? 'TF-IDF' : 'MiniLM'}: ${percent(scores.get(node.dataset.labelId))}`;});
-          const assigned=example.trace.assigned;
-          document.getElementById('assigned-score').textContent=`Пост #${example.entry_id} · оценка назначаемого признака: ${percent(assigned?.score)}${assigned?.subcategories?.length ? ` · подкатегории: ${assigned.subcategories.map(item=>`${item.name} ${percent(item.score)}`).join('; ')}` : ''}`;
         }
         postSelect.onchange=showScores;preview.append(label('Пост для показа оценок',postSelect));showScores();
       }
@@ -148,11 +146,10 @@
         return trace.op==='not' ? `НЕ (${children[0]})` : `(${children.join(trace.op==='and' ? ' И ' : ' ИЛИ ')})`;
       }
       for (const example of data.examples) {const line=el('p');const link=el('a',`#${example.entry_id}`);link.href=`/pipeline/${example.entry_id}`;link.target='_blank';line.append(link,` · ${{matched:'Совпало',rejected:'Не прошло',unknown:'Нет оценки'}[example.outcome]}`);preview.append(line,el('p',scoreDetails(example.trace),'selection-reason'));
-        const assigned=example.trace.assigned;if(assigned)preview.append(el('p',`Назначаемый признак: ${assigned.name} · ${percent(assigned.score)}`,'selection-reason'));}
+        preview.append(el('p',`Назначаемый лейбл: ${marks.find(mark=>String(mark.id)===assignedMark.value)?.name || '—'}`,'selection-reason'));}
     }catch(error){report(feedback,error);}finally{submit.disabled=false;}};
     apply.onclick=async()=>{if(!previewDigest)return;apply.disabled=true;try {const data=await api('/api/pipeline/filters/apply',{...draft(),preview_digest:previewDigest});await load();reset(filters.find(item=>item.id===data.id));feedback.textContent=data.application_id ? 'Сохранено. Пересчёт карточек поставлен в очередь.' : 'Сохранено. Фильтр отключён.';}catch(error){report(feedback,error);apply.disabled=false;}};
     await load();
-    for(const item of catalog.filter(item=>!item.parent))assignedCategory.add(new Option(`${item.name}${item.kind==='feature' ? ' · признак' : ''}`,item.id));
     reset();
     document.getElementById('filter-fields').disabled=false;
     document.getElementById('filter-new').disabled=false;

@@ -90,16 +90,17 @@ def test_absent_stale_or_failed_selected_model_needs_backfill():
     assert not needs_backfill(None, post)
 
 
-def test_assigned_label_uses_own_score_and_missing_is_unknown():
+def test_dictionary_label_has_no_model_score():
     post = SimpleNamespace(text="Text", is_deleted=False)
     job = SimpleNamespace(status="complete", current_run_id=1, text_sha256=text_sha256(post.text),
         result={"taxonomy_version": taxonomy_catalog()["version"], "scores": {"tool_description": .8, "society": .42}})
     version = SimpleNamespace(expression=leaf(), assigned_label_id="society")
     result = assessment(version, job, post)
-    assert result["outcome"] == "matched" and result["trace"]["assigned"]["score"] == .42
+    assert result["outcome"] == "matched" and "assigned" not in result["trace"]
     del job.result["scores"]["society"]
+    assert assessment(version, job, post)["outcome"] == "matched"
+    del job.result["scores"]["tool_description"]
     assert assessment(version, job, post)["outcome"] == "unknown"
-    assert needs_backfill(job, post, "society")
 
 
 def test_catalog_contains_all_model_scores():

@@ -12,7 +12,7 @@ from app.models import (FilterApplication, FilterEvaluation, FilterMark, FilterM
                         PostFilterMark, SelectionFilter, SelectionFilterVersion, TaxonomyClassification,
                         TaxonomyRun, TelegramChat, TelegramPost)
 from app.taxonomy.jobs import text_sha256
-from app.content.selection_rules import evaluate, taxonomy_catalog, label_name
+from app.content.selection_rules import evaluate, taxonomy_catalog
 
 logger = logging.getLogger(__name__)
 
@@ -50,16 +50,6 @@ def assessment(version, job, post):
         if not scores:
             reason = "Нужно обновить полный набор оценок"
     result, trace = evaluate(version.expression, scores)
-    target = getattr(version, "assigned_label_id", None)
-    if target:
-        def score_for(label):
-            _valid, assessed = evaluate({"op": "condition", "label_id": label, "compare": "gte", "threshold": 0}, scores)
-            return assessed["score"]
-        trace["assigned"] = {"label_id": target, "name": label_name(target), "score": score_for(target),
-            "subcategories": [{"label_id": item["id"], "name": item["name"], "score": score_for(item["id"])}
-                              for item in taxonomy_catalog()["labels"] if item["parent"] == target]}
-        if trace["assigned"]["score"] is None and not reason:
-            reason = "Нет оценки назначаемого признака"
     if reason:
         result = None
         trace["reason"] = reason
@@ -168,7 +158,7 @@ async def preview(session, version):
             counts[values["outcome"]] += 1
             if values["outcome"] == "matched" and entry.id not in marked:
                 counts["new_marks"] += 1
-            if needs_backfill(job, post, getattr(version, "assigned_label_id", None)):
+            if needs_backfill(job, post):
                 counts["backfill_needed"] += 1
             # Сначала пригодные примеры с оценками. Первые карточки базы могут
             # оказаться только медиа; они не должны вытеснять весь предпросмотр.
@@ -179,7 +169,7 @@ async def preview(session, version):
     return {**counts, "total": sum(counts[key] for key in ("matched", "rejected", "unknown")), "examples": examples}
 
 
-def needs_backfill(job, post, assigned_label_id=None):
+def needs_backfill(job, post):
     if not (post.text or "").strip() or post.is_deleted:
         return False
     if job is None:
@@ -188,9 +178,7 @@ def needs_backfill(job, post, assigned_label_id=None):
     if job.status in {"queued", "running"} and current_text:
         return False  # Завершение уже поставленного запуска проверит включённые фильтры.
     scores = (job.result or {}).get("scores") or {}
-    target_missing = assigned_label_id and evaluate({"op": "condition", "label_id": assigned_label_id,
-        "compare": "gte", "threshold": 0}, scores)[0] is None
-    return (job.status != "complete" or not current_text or not scores or bool(target_missing)
+    return (job.status != "complete" or not current_text or not scores
             or (job.result or {}).get("taxonomy_version") != taxonomy_catalog()["version"])
 
 
@@ -221,7 +209,7 @@ async def application_batch(factory):
                     TaxonomyClassification.pipeline_entry_id == entry.id,
                     TaxonomyClassification.model_key == version.model_key))).scalar_one_or_none()
                 values = await evaluate_post(session, entry, post, version, f"apply:{application.id}", job)
-                if needs_backfill(job, post, version.assigned_label_id):
+                if needs_backfill(job, post):
                     try:
                         await enqueue(session, entry.id, version.model_key)
                         application.backfilled += 1
@@ -289,7 +277,7 @@ async def load_states(session, entries: dict):
         FilterMark, FilterMark.id == PostFilterMark.mark_id).where(PostFilterMark.entry_id.in_(ids),
         PostFilterMark.active.is_(True)))).all():
         result[assignment.entry_id]["marks"].append({"id": mark.id, "label_id": mark.label_id,
-            "name": label_name(mark.label_id) if mark.label_id else mark.name, "color": mark.color,
+            "name": mark.name, "color": mark.color,
             "archived": mark.archived, "assigned_at": assignment.assigned_at.isoformat(), "sources": []})
     sources = (await session.execute(select(FilterMarkEvent, FilterEvaluation, SelectionFilterVersion).join(
         FilterEvaluation, FilterEvaluation.id == FilterMarkEvent.evaluation_id).join(

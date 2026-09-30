@@ -9,10 +9,7 @@
     container.querySelector('[data-mark-count]').textContent=(state.marks||[]).length;
     for(const mark of state.marks||[]) {
       const block=el('div',undefined,'post-mark');
-      const latestByModel=new Map();
-      for(const source of mark.sources)if(source.assigned && !latestByModel.has(source.model_key))latestByModel.set(source.model_key,source);
-      const scores=Array.from(latestByModel.values()).map(source=>`${source.model_key==='tfidf' ? 'TF-IDF' : 'MiniLM'} ${(source.assigned.score*100).toFixed(2)}%${source.stale ? ' (прежний текст)' : ''}`);
-      const chip=el('span',`${mark.name}${scores.length ? ` · ${scores.join(' · ')}` : ''}`,'post-mark-chip');chip.style.borderColor=mark.color;
+      const chip=el('span',mark.name,'post-mark-chip');chip.style.borderColor=mark.color;
       const remove=el('button','Снять');remove.type='button';remove.dataset.removeMark=mark.id;remove.disabled=active;remove.setAttribute('aria-label',`Снять признак ${mark.name}`);
       block.append(chip,remove);
       const sources=el('details');sources.append(el('summary',`Основания · ${mark.sources.length}`));

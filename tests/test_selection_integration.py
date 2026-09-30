@@ -220,59 +220,46 @@ async def test_backfill_waits_for_other_model_without_losing_cursor(db, client):
     assert (await client.get(f"/api/pipeline/{entry_id}/marks")).json()["marks"]
 
 
-async def test_assign_model_label_scores_and_readonly_preview(db, client):
+async def test_manual_dictionary_label_with_two_model_conditions(db, client):
     entry_id = await seed(db)
-    async with db() as session:
-        for job in (await session.execute(select(TaxonomyClassification))).scalars():
-            result = dict(job.result)
-            result["scores"] = {**result["scores"], "society": .543 if job.model_key == "tfidf" else .5831}
-            job.result = result
-        await session.commit()
-    for model, expected in (("tfidf", .543), ("minilm", .5831)):
-        draft = {"name": model, "model_key": model, "assigned_label_id": "society", "expression": {
-            "op": "condition", "label_id": "tool_description", "compare": "gte", "threshold": 60}}
+    mark_id = (await client.post("/api/pipeline/marks", json={"name": "Мой лейбл", "color": "#ff8800"})).json()["id"]
+    for model in ("tfidf", "minilm"):
+        draft = {"name": model, "model_key": model, "mark_id": mark_id, "expression": {
+            "op": "and", "children": [{"op": "condition", "label_id": label["id"], "compare": "gte", "threshold": 60}
+                                       for label in taxonomy_catalog()["labels"]]}}
         response = await client.post("/api/pipeline/filters/preview", json=draft)
         assert response.status_code == 200, response.text
         data = response.json()
-        assert data["matched"] == 1
-        assert data["examples"][0]["trace"]["assigned"]["score"] == expected
-        assert len(data["examples"][0]["trace"]["assigned"]["subcategories"]) == 3
-        if model == "tfidf":
-            assert not (await client.get("/api/pipeline/marks")).json()["marks"]
+        assert data["matched"] == 1 and len(data["examples"][0]["trace"]["children"]) == 38
+        assert "assigned" not in data["examples"][0]["trace"]
+        assert len((await client.get("/api/pipeline/marks")).json()["marks"]) == 1
         response = await client.post("/api/pipeline/filters/apply", json={**draft, "preview_digest": data["preview_digest"]})
         assert response.status_code == 200, response.text
         await flush_apps(db)
     marks = (await client.get(f"/api/pipeline/{entry_id}/marks")).json()["marks"]
-    assert len(marks) == 1 and marks[0]["label_id"] == "society"
-    assert {source["model_key"]: source["assigned"]["score"] for source in marks[0]["sources"]} == {"tfidf": .543, "minilm": .5831}
-    assert (await client.put(f"/api/pipeline/marks/{marks[0]['id']}", json={"name": "Wrong"})).status_code == 409
-    assert (await client.get(f"/api/pipeline/board-state?entry_ids={entry_id}")).json()["entries"][str(entry_id)]["stage"] == "filtered"
+    assert len(marks) == 1 and marks[0]["name"] == "Мой лейбл" and marks[0]["label_id"] is None
+    assert len(marks[0]["sources"]) == 2
+    assert all(source["assigned"] is None for source in marks[0]["sources"])
+    assert (await client.put(f"/api/pipeline/marks/{mark_id}", json={"name": "Переименовал"})).status_code == 200
+    assert (await client.get(f"/api/pipeline/{entry_id}/marks")).json()["marks"][0]["name"] == "Переименовал"
     async with db() as session:
-        job = (await session.execute(select(TaxonomyClassification).where(TaxonomyClassification.model_key == "tfidf"))).scalar_one()
-        result = dict(job.result)
-        result["scores"] = {key: score for key, score in result["scores"].items() if key != "society"}
-        job.result = result
-        await session.commit()
-    draft["model_key"] = "tfidf"
-    data = (await client.post("/api/pipeline/filters/preview", json=draft)).json()
-    assert data["unknown"] == 1 and data["backfill_needed"] == 1
-    assert data["examples"][0]["trace"]["assigned"]["score"] is None
+        assert all(version.assigned_label_id is None for version in (await session.execute(select(SelectionFilterVersion))).scalars())
 
 
-async def test_target_validation_and_binary_feature(db, client):
+async def test_dictionary_target_required_and_model_label_target_rejected(db, client):
     await seed(db)
-    draft = {"name": "Feature", "assigned_label_id": "is_ad", "expression": {
-        "op": "condition", "label_id": "is_job_vacancy", "compare": "gte", "threshold": 60}}
-    response = await client.post("/api/pipeline/filters/preview", json=draft)
-    assert response.status_code == 200 and response.json()["matched"] == 1
-    for bad in ({**draft, "assigned_label_id": "unknown"}, {**draft, "mark_id": 1},
-                {"name": "Missing", "expression": draft["expression"]}):
-        assert (await client.post("/api/pipeline/filters/preview", json=bad)).status_code == 422
+    expression = {"op": "condition", "label_id": "is_job_vacancy", "compare": "gte", "threshold": 60}
+    for draft in ({"name": "Missing", "expression": expression},
+                  {"name": "Auto", "assigned_label_id": "is_ad", "expression": expression}):
+        assert (await client.post("/api/pipeline/filters/preview", json=draft)).status_code == 422
+    assert (await client.post("/api/pipeline/filters/preview", json={"name": "Invalid", "mark_id": 123456, "expression": expression})).status_code == 409
+    assert not (await client.get("/api/pipeline/marks")).json()["marks"]
 
 
 async def test_preview_keeps_scored_post_after_many_media_cards(db, client):
     entry_id = await seed(db, empty_first=13)
-    draft = {"name": "Scored example", "assigned_label_id": "society", "expression": {
+    mark_id = (await client.post("/api/pipeline/marks", json={"name": "Preview label"})).json()["id"]
+    draft = {"name": "Scored example", "mark_id": mark_id, "expression": {
         "op": "condition", "label_id": "society", "compare": "gte", "threshold": 60}}
     response = await client.post("/api/pipeline/filters/preview", json=draft)
     assert response.status_code == 200, response.text
@@ -280,4 +267,4 @@ async def test_preview_keeps_scored_post_after_many_media_cards(db, client):
     assert data["total"] == 14 and data["unknown"] == 13 and data["matched"] == 1
     assert len(data["examples"]) == 12
     assert data["examples"][0]["entry_id"] == entry_id
-    assert data["examples"][0]["trace"]["assigned"]["score"] == .8
+    assert data["examples"][0]["trace"]["score"] == .8

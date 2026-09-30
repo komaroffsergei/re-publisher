@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="toolbar"><div><h1>Признаки</h1><p class="muted">Категории модели, назначаемые фильтрами. Оценки конкретных постов показаны на карточках. Прежние пользовательские признаки сохраняются.</p></div><a class="button" href="/pipeline/filters">Настроить фильтры →</a></section>
+<section class="toolbar"><div><h1>Признаки</h1><p class="muted">Твои лейблы для постов. Название, описание и цвет задаёшь сам. Фильтры назначают выбранный лейбл; категории и оценки модели задаются в условиях фильтра.</p></div><a class="button" href="/pipeline/filters">Настроить фильтры →</a></section>
 <div class="selection-layout">
-  <article hidden><h2 id="mark-form-heading">Пользовательский признак прежнего фильтра</h2>
+  <article><h2 id="mark-form-heading">Новый признак</h2>
     <form id="mark-form" class="selection-form">
       <label>Название<input name="name" maxlength="80" required></label>
       <label>Описание<textarea name="description" maxlength="1000" rows="3"></textarea></label>
@@ -13,5 +13,5 @@
   </article>
   <section id="marks-list" aria-label="Словарь признаков"></section>
 </div>
-<script src="/static/selection-admin.js?v=20260930-3" defer></script>
+<script src="/static/selection-admin.js?v=20260930-4" defer></script>
 {% endblock %}
