@@ -182,3 +182,33 @@ async def test_edits_unknown_auth_dictionary_and_pages(db, client):
         assert (await client.get(route)).status_code == 200
     assert (await client.get("/api/pipeline/filters", auth=None)).status_code == 401
     assert (await client.post("/api/pipeline/marks", json={"name": "Rejected"}, headers={"Origin": "https://other.invalid"})).status_code == 403
+
+
+async def test_backfill_waits_for_other_model_without_losing_cursor(db, client):
+    entry_id = await seed(db)
+    async with db() as session:
+        jobs = {job.model_key: job for job in (await session.execute(select(TaxonomyClassification).where(
+            TaxonomyClassification.pipeline_entry_id == entry_id))).scalars()}
+        jobs["tfidf"].status = "stale"
+        jobs["tfidf"].result = None
+        jobs["minilm"].status = "running"
+        minilm_id = jobs["minilm"].id
+        await session.commit()
+    mark_id = (await client.post("/api/pipeline/marks", json={"name": "Deferred"})).json()["id"]
+    await save_rule(client, mark_id)
+    await application_batch(db)
+    async with db() as session:
+        application = (await session.execute(select(FilterApplication))).scalar_one()
+        assert application.processed == 0 and application.last_entry_id == 0
+    result = {"taxonomy_version": taxonomy_catalog()["version"],
+              "scores": {"tool_description": .9}, "top_3": [], "review_status": "scored"}
+    await finish_job(db, minilm_id, result, 42)
+    await flush_apps(db)
+    async with db() as session:
+        job = (await session.execute(select(TaxonomyClassification).where(
+            TaxonomyClassification.pipeline_entry_id == entry_id, TaxonomyClassification.model_key == "tfidf"))).scalar_one()
+        assert job.status == "queued"
+        job.status = "running"; tfidf_id = job.id
+        await session.commit()
+    await finish_job(db, tfidf_id, result, 42)
+    assert (await client.get(f"/api/pipeline/{entry_id}/marks")).json()["marks"]

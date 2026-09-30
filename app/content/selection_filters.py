@@ -167,10 +167,15 @@ async def preview(session, version):
 
 
 def needs_backfill(job, post):
-    return bool(job and job.status == "complete" and job.text_sha256 == text_sha256(post.text)
-                and (post.text or "").strip() and not post.is_deleted
-                and (not (job.result or {}).get("scores")
-                     or (job.result or {}).get("taxonomy_version") != taxonomy_catalog()["version"]))
+    if not (post.text or "").strip() or post.is_deleted:
+        return False
+    if job is None:
+        return True
+    current_text = job.text_sha256 == text_sha256(post.text)
+    if job.status in {"queued", "running"} and current_text:
+        return False  # Завершение уже поставленного запуска проверит включённые фильтры.
+    return (job.status != "complete" or not current_text or not (job.result or {}).get("scores")
+            or (job.result or {}).get("taxonomy_version") != taxonomy_catalog()["version"])
 
 
 async def application_batch(factory):
@@ -200,9 +205,6 @@ async def application_batch(factory):
                     TaxonomyClassification.pipeline_entry_id == entry.id,
                     TaxonomyClassification.model_key == version.model_key))).scalar_one_or_none()
                 values = await evaluate_post(session, entry, post, version, f"apply:{application.id}", job)
-                application.processed += 1
-                application.matched += values["outcome"] == "matched"
-                application.unknown += values["outcome"] == "unknown"
                 if needs_backfill(job, post):
                     try:
                         await enqueue(session, entry.id, version.model_key)
@@ -210,6 +212,12 @@ async def application_batch(factory):
                     except HTTPException as exc:
                         if exc.status_code != 409:
                             raise
+                        # Другая модель держит карточку. Не теряем её за курсором:
+                        # следующая партия продолжится с этой записи после завершения запуска.
+                        return
+                application.processed += 1
+                application.matched += values["outcome"] == "matched"
+                application.unknown += values["outcome"] == "unknown"
                 application.last_entry_id = entry.id
             application.updated_at = datetime.now(timezone.utc)
 

@@ -73,3 +73,18 @@ def test_preview_is_bound_to_draft():
     assert digest(draft) == token
     draft.model_key = "minilm"
     assert digest(draft) != token
+
+
+def test_absent_stale_or_failed_selected_model_needs_backfill():
+    post = SimpleNamespace(text="Text", is_deleted=False)
+    assert needs_backfill(None, post)
+    job = SimpleNamespace(status="failed", text_sha256=text_sha256(post.text), result=None)
+    assert needs_backfill(job, post)
+    job.status = "running"
+    assert not needs_backfill(job, post)
+    post.text = "Edited"
+    assert needs_backfill(job, post)
+    post.text = ""
+    assert not needs_backfill(None, post)
+    post.text = "Text"; post.is_deleted = True
+    assert not needs_backfill(None, post)
