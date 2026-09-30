@@ -51,6 +51,12 @@ async def claim_next(factory, model_key: str) -> int | None:
 async def finish_job(factory, job_id: int, result: dict | None, elapsed_ms: int, error: str | None = None) -> None:
     async with factory() as session:
         async with session.begin():
+            # Совпадает с порядком блокировок enqueue/apply: карточка, затем job.
+            entry_id = (await session.execute(select(TaxonomyClassification.pipeline_entry_id)
+                .where(TaxonomyClassification.id == job_id))).scalar_one_or_none()
+            if entry_id is None:
+                return
+            await session.execute(select(PipelineEntry.id).where(PipelineEntry.id == entry_id).with_for_update())
             job = (
                 await session.execute(
                     select(TaxonomyClassification).where(TaxonomyClassification.id == job_id).with_for_update()
@@ -120,6 +126,12 @@ async def finish_job(factory, job_id: int, result: dict | None, elapsed_ms: int,
                 run.error = job.error
                 run.elapsed_ms = job.elapsed_ms
                 run.finished_at = now
+            if entry is not None:
+                from app.content.selection_filters import evaluate_completed_job, preserve_mark_stage
+                if job.status == "complete":
+                    await evaluate_completed_job(session, entry, post, job)
+                else:
+                    await preserve_mark_stage(session, entry)
 
 
 async def run() -> None:

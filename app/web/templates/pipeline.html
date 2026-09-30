@@ -7,7 +7,7 @@
     {% if processing_enabled %}
       <p class="muted">Посты из Telegram: получение, сортировка, маркировка ссылкой на источник, готовность и публикация.</p>
     {% else %}
-      <p class="muted">Сообщения из папки MAX. {% if taxonomy_enabled %}Две стрелки запускают MiniLM и TF-IDF отдельно. После сортировки ссылка на оригинал добавляется на шаге «Маркировка». Посты без текста сразу уходят в «Отсортирован».{% else %}Обработка и публикация сейчас отключены.{% endif %}</p>
+      <p class="muted">Сообщения из папки MAX. {% if taxonomy_enabled %}MiniLM и TF-IDF запускаются отдельно. Фильтры назначают признаки и переводят пост в «Отфильтрован». Затем добавляется ссылка на источник.{% else %}Обработка и публикация сейчас отключены.{% endif %}</p>
     {% endif %}
   </div>
   {% if processing_enabled %}
@@ -30,6 +30,8 @@
 
 <article>
   <form method="get" class="pipeline-search">
+    <label>Признак<select name="mark"><option value="">Все</option>{% for mark in mark_options %}<option value="{{ mark.id }}" {% if selected_mark == mark.id %}selected{% endif %}>{{ mark.name }}{% if mark.archived %} · архивный{% endif %}</option>{% endfor %}</select></label>
+    <label>Назначен фильтром<select name="selection_filter"><option value="">Все</option>{% for filter in selection_options %}<option value="{{ filter.id }}" {% if selected_filter == filter.id %}selected{% endif %}>{{ filter.name }}</option>{% endfor %}</select></label>
     <label>Поиск
       <input type="search" name="q" value="{{ search_query }}" placeholder="Текст, чат, заголовок, черновик">
     </label>
@@ -51,6 +53,7 @@
       <header class="kanban-column-head">
         <div>
           <h2>{{ column.label }}</h2>
+          {% if column.stage == 'filtered' %}<a class="button" href="/pipeline/filters">⚙ Настроить фильтры</a>{% endif %}
           <p class="muted">{{ column.count }} · показано {{ column.rows|length }}</p>
         </div>
         <span class="kanban-count" data-column-count>{{ column.rows|length }}</span>
@@ -60,6 +63,8 @@
         <summary>Фильтры</summary>
         <form method="get" class="kanban-filters">
           <input type="hidden" name="q" value="{{ search_query }}">
+          <input type="hidden" name="mark" value="{{ selected_mark or '' }}">
+          <input type="hidden" name="selection_filter" value="{{ selected_filter or '' }}">
           {% for other in columns %}
             {% if other.stage != column.stage %}
               <input type="hidden" name="{{ other.stage }}_sort" value="{{ other.filters.sort }}">
@@ -154,17 +159,16 @@
             <div class="kanban-card-top">
               <strong>#{{ entry.id }}</strong>
               <span class="status">post {{ entry.source_post_id }}</span>
-              {% if taxonomy_enabled and column.stage in ('received', 'sorted', 'marking') and (post.text or '').strip() %}
+              {% if taxonomy_enabled and column.stage in ('received', 'sorted', 'filtered', 'marking') and (post.text or '').strip() %}
                 <span class="taxonomy-actions">
                   <button class="taxonomy-run" type="button" data-taxonomy-run="minilm" aria-label="Классифицировать пост #{{ entry.id }} моделью MiniLM" title="Новая модель MiniLM" {% if is_active %}disabled{% endif %}>→ <small>MiniLM</small></button>
                   <button class="taxonomy-run taxonomy-run-baseline" type="button" data-taxonomy-run="tfidf" aria-label="Классифицировать пост #{{ entry.id }} моделью TF-IDF" title="Контрольная модель TF-IDF" {% if is_active %}disabled{% endif %}>→ <small>TF-IDF</small></button>
                 </span>
               {% endif %}
-              {% if column.stage == 'sorted' %}
-                <button class="mark-source-run" type="button" data-mark-source aria-label="Добавить ссылку на источник поста #{{ entry.id }}" {% if is_active %}disabled{% endif %}>Источник →</button>
-              {% endif %}
+                <button class="mark-source-run" type="button" data-mark-source aria-label="Добавить ссылку на источник поста #{{ entry.id }}" {% if column.stage != 'filtered' %}hidden{% endif %} {% if is_active or not board_state.get('can_mark_source') %}disabled{% endif %}>Источник →</button>
             </div>
             <a class="kanban-card-link" href="/pipeline/{{ entry.id }}"><h3>{{ title }}</h3></a>
+            {% set selection_state = board_state.get('selection') or {} %}{% include '_filter_marks.html' %}
             <div class="kanban-meta" title="Чат: {{ chat.title if chat else post.chat_peer_id }}&#10;Дата поста: {{ post.date or 'нет' }}&#10;Получен: {{ post.created_at }}&#10;Последняя операция: {{ entry.last_operation_at }}">
               <span>{{ chat.title if chat else post.chat_peer_id }}</span>
               <span>{{ post.date or "без даты" }}</span>
@@ -318,10 +322,11 @@
     card.classList.toggle("has-error", hasError && !active);
     card.style.order = active ? "-1000" : card.dataset.originalOrder || "0";
     renderTaxonomy(card, state.taxonomies);
+    window.renderPostSelection?.(card, state.selection, active);
     const markButton = card.querySelector('[data-mark-source]');
     if (markButton) {
-      markButton.hidden = state.stage !== 'sorted';
-      markButton.disabled = active;
+      markButton.hidden = state.stage !== 'filtered';
+      markButton.disabled = active || !state.can_mark_source;
     }
     const source = card.querySelector('[data-marked-source]');
     if (source && state.marked_source_url) {
@@ -388,6 +393,7 @@
       // Polling must not break the static board.
     }
   }
+  document.addEventListener('selection-changed', pollBoardState);
 
   cards.forEach((card) => applyActiveOnly(card));
   cards.forEach((card) => {

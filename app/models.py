@@ -549,6 +549,90 @@ class TaxonomyRun(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class FilterMark(TimestampMixin, Base):
+    """Словарь признаков для маршрутизации; не обучающие метки модели."""
+    __tablename__ = "filter_marks"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    description: Mapped[str] = mapped_column(Text, server_default="", nullable=False)
+    color: Mapped[str] = mapped_column(Text, server_default="#a78bfa", nullable=False)
+    archived: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
+
+
+class SelectionFilter(TimestampMixin, Base):
+    __tablename__ = "selection_filters"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, server_default="true", nullable=False)
+    archived: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
+    active_version_id: Mapped[int | None] = mapped_column(
+        ForeignKey("selection_filter_versions.id", use_alter=True, name="fk_selection_filter_active_version"), nullable=True)
+
+
+class SelectionFilterVersion(Base):
+    __tablename__ = "selection_filter_versions"
+    __table_args__ = (UniqueConstraint("filter_id", "number", name="uq_selection_filter_version"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    filter_id: Mapped[int] = mapped_column(ForeignKey("selection_filters.id", ondelete="CASCADE"), index=True)
+    number: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    model_key: Mapped[str] = mapped_column(Text, nullable=False)
+    mark_id: Mapped[int] = mapped_column(ForeignKey("filter_marks.id"), nullable=False)
+    expression: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class FilterEvaluation(Base):
+    __tablename__ = "filter_evaluations"
+    __table_args__ = (UniqueConstraint("entry_id", "version_id", "input_key", name="uq_filter_evaluation_input"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    entry_id: Mapped[int] = mapped_column(ForeignKey("pipeline_entries.id", ondelete="CASCADE"), index=True)
+    version_id: Mapped[int] = mapped_column(ForeignKey("selection_filter_versions.id"), index=True)
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("taxonomy_runs.id", ondelete="SET NULL"), nullable=True)
+    text_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    input_key: Mapped[str] = mapped_column(Text, nullable=False)
+    outcome: Mapped[str] = mapped_column(Text, nullable=False)
+    trace: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class FilterApplication(TimestampMixin, Base):
+    """Курсор задания хранится в БД; обработка партии и курсор коммитятся вместе."""
+    __tablename__ = "filter_applications"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    version_id: Mapped[int] = mapped_column(ForeignKey("selection_filter_versions.id"), index=True)
+    status: Mapped[str] = mapped_column(Text, server_default="queued", nullable=False)
+    last_entry_id: Mapped[int] = mapped_column(BigInteger, server_default="0", nullable=False)
+    max_entry_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    processed: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    matched: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    unknown: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    backfilled: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class PostFilterMark(Base):
+    __tablename__ = "post_filter_marks"
+    __table_args__ = (UniqueConstraint("entry_id", "mark_id", name="uq_post_filter_mark"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    entry_id: Mapped[int] = mapped_column(ForeignKey("pipeline_entries.id", ondelete="CASCADE"), index=True)
+    mark_id: Mapped[int] = mapped_column(ForeignKey("filter_marks.id"), index=True)
+    active: Mapped[bool] = mapped_column(Boolean, server_default="true", nullable=False)
+    assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class FilterMarkEvent(Base):
+    __tablename__ = "filter_mark_events"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    entry_id: Mapped[int] = mapped_column(ForeignKey("pipeline_entries.id", ondelete="CASCADE"), index=True)
+    mark_id: Mapped[int] = mapped_column(ForeignKey("filter_marks.id"))
+    evaluation_id: Mapped[int | None] = mapped_column(ForeignKey("filter_evaluations.id"), nullable=True)
+    action: Mapped[str] = mapped_column(Text, nullable=False)
+    dedup_key: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class RewriteAttempt(Base):
     __tablename__ = "rewrite_attempts"
 

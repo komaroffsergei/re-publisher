@@ -30,6 +30,7 @@ from app.taxonomy.jobs import text_sha256
 
 PIPELINE_STAGE_RECEIVED = "received"
 PIPELINE_STAGE_SORTED = "sorted"
+PIPELINE_STAGE_FILTERED = "filtered"
 PIPELINE_STAGE_MARKING = "marking"
 PIPELINE_STAGE_READY = "ready"
 PIPELINE_STAGE_PUBLISHED = "published"
@@ -37,6 +38,7 @@ PIPELINE_STAGE_PUBLISHED = "published"
 PIPELINE_STAGES = [
     PIPELINE_STAGE_RECEIVED,
     PIPELINE_STAGE_SORTED,
+    PIPELINE_STAGE_FILTERED,
     PIPELINE_STAGE_MARKING,
     PIPELINE_STAGE_READY,
     PIPELINE_STAGE_PUBLISHED,
@@ -45,6 +47,7 @@ PIPELINE_STAGES = [
 PIPELINE_STAGE_LABELS = {
     PIPELINE_STAGE_RECEIVED: "Не готовы",
     PIPELINE_STAGE_SORTED: "Отсортирован",
+    PIPELINE_STAGE_FILTERED: "Отфильтрован",
     PIPELINE_STAGE_MARKING: "Маркировка",
     PIPELINE_STAGE_READY: "Готов к публикации",
     PIPELINE_STAGE_PUBLISHED: "Опубликован",
@@ -376,6 +379,9 @@ async def sync_pipeline_entry_stage(session: AsyncSession, post_id: int) -> Pipe
             entry.marked_source_url = None
             entry.marked_text_sha256 = None
             entry.marked_at = None
+    from app.content.selection_filters import has_marks
+    if stage in {PIPELINE_STAGE_RECEIVED, PIPELINE_STAGE_SORTED} and await has_marks(session, entry.id):
+        stage = PIPELINE_STAGE_FILTERED
     now = datetime.now(timezone.utc)
     values: dict[str, Any] = {
         "content_item_id": item.id if item else None,

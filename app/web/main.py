@@ -4,6 +4,7 @@ import asyncio
 import json
 import secrets
 from contextlib import asynccontextmanager
+from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,8 @@ from app.content.pipeline_logic import READY_DRAFT_STATUS
 from app.content.pipeline_manager import classify_post
 from app.content.pipeline_rewriter import rewrite_one, rewrite_ready_pipeline, telegram_post_source_url
 from app.content.source_marking import marked_post_text
+from app.content.selection_filters import application_loop, has_marks, load_states
+from app.web.selection_routes import register_filter_routes
 from app.content.processor import process_post
 from app.content.prompt_versions import (
     LINK_SUMMARY_PROMPT,
@@ -86,6 +89,12 @@ from app.models import (
     TelegramPost,
     TaxonomyClassification,
     TaxonomyRun,
+    FilterMark,
+    PostFilterMark,
+    FilterMarkEvent,
+    FilterEvaluation,
+    SelectionFilter,
+    SelectionFilterVersion,
     YandexGenreClassification,
 )
 from app.taxonomy.jobs import enqueue as enqueue_taxonomy, public_job, public_run
@@ -142,13 +151,18 @@ def create_app() -> FastAPI:
             await reset_stale_pipeline_activity(session)
             await session.commit()
         try:
+            filter_task = asyncio.create_task(application_loop(app.state.session_factory))
             yield
         finally:
+            filter_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await filter_task
             await engine.dispose()
 
     app = FastAPI(title="Re Publisher", lifespan=lifespan)
     app.state.settings = settings
     app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+    register_filter_routes(app, require_auth, session_factory, Jinja2Templates(directory=str(BASE_DIR / "templates")))
     register_routes(app)
     return app
 
@@ -492,6 +506,7 @@ def derived_stage_progress(stage: str | None) -> int:
     return {
         "received": 0,
         "sorted": 20,
+        "filtered": 45,
         "marking": 70,
         "ready": 90,
         "published": 100,
@@ -594,6 +609,7 @@ async def board_state_for_entries(app: FastAPI, session, entry_ids: list[int]) -
     for attempt in attempt_rows:
         attempts.setdefault(attempt.pipeline_entry_id, attempt)
 
+    selection_states = await load_states(session, entries)
     payloads: dict[int, dict[str, Any]] = {}
     for entry_id in entry_ids:
         pair = entries.get(entry_id)
@@ -658,6 +674,10 @@ async def board_state_for_entries(app: FastAPI, session, entry_ids: list[int]) -
             "last_operation_at": iso_datetime(entry.last_operation_at),
             "updated_at": iso_datetime(entry.updated_at),
             "taxonomies": taxonomies,
+            "selection": selection_states.get(entry_id, {"marks": [], "checks": []}),
+            "can_mark_source": not active and not post.is_deleted and entry.stage in {"filtered", "marking"}
+                and any(job and job["status"] in {"complete", "media_only"} for job in taxonomies.values())
+                and (entry.stage == "marking" or bool(selection_states.get(entry_id, {}).get("marks"))),
         }
     return payloads
 
@@ -1434,6 +1454,11 @@ def register_routes(app: FastAPI) -> None:
         search_query = (q or "").strip()
         settings: Settings = request.app.state.settings
         query_params = request.query_params
+        try:
+            selected_mark = int(query_params.get("mark", "0"))
+            selected_filter = int(query_params.get("selection_filter", "0"))
+        except ValueError:
+            selected_mark = selected_filter = 0
         sort_options = {
             "last_operation": "последняя операция",
             "received": "дата получения",
@@ -1517,6 +1542,9 @@ def register_routes(app: FastAPI) -> None:
             "id": PipelineEntry.id,
         }
         async with session_factory(request)() as session:
+            mark_options = list((await session.execute(select(FilterMark).order_by(FilterMark.id))).scalars())
+            selection_options = list((await session.execute(select(SelectionFilter).where(
+                SelectionFilter.archived.is_(False)).order_by(SelectionFilter.id))).scalars())
             genre_rows = list(
                 (
                     await session.execute(
@@ -1571,6 +1599,17 @@ def register_routes(app: FastAPI) -> None:
             for stage in PIPELINE_STAGES:
                 filters = column_filters(stage)
                 conditions = [TelegramChat.folder_name == settings.folder_name, PipelineEntry.stage == stage]
+                if selected_mark:
+                    conditions.append(PipelineEntry.id.in_(select(PostFilterMark.entry_id).where(
+                        PostFilterMark.active.is_(True), PostFilterMark.mark_id == selected_mark)))
+                if selected_filter:
+                    conditions.append(PipelineEntry.id.in_(select(FilterMarkEvent.entry_id).join(
+                        FilterEvaluation, FilterEvaluation.id == FilterMarkEvent.evaluation_id).join(
+                        SelectionFilterVersion, SelectionFilterVersion.id == FilterEvaluation.version_id).join(
+                        PostFilterMark, (PostFilterMark.entry_id == FilterMarkEvent.entry_id)
+                            & (PostFilterMark.mark_id == FilterMarkEvent.mark_id)).where(
+                        SelectionFilterVersion.filter_id == selected_filter, FilterMarkEvent.action == "assigned",
+                        PostFilterMark.active.is_(True), FilterMarkEvent.created_at >= PostFilterMark.assigned_at)))
                 if filters["genre"]:
                     conditions.append(PipelineEntry.genre_primary == filters["genre"])
                 if filters["eligible"] == "yes":
@@ -1621,6 +1660,10 @@ def register_routes(app: FastAPI) -> None:
                 "sort_options": sort_options,
                 "ready_status": READY_DRAFT_STATUS,
                 "active_states": active_states,
+                "mark_options": mark_options,
+                "selection_options": selection_options,
+                "selected_mark": selected_mark,
+                "selected_filter": selected_filter,
             },
         )
 
@@ -1851,8 +1894,16 @@ def register_routes(app: FastAPI) -> None:
             if row is None or row[2].folder_name != "MAX":
                 raise HTTPException(404, detail="Карточка не найдена")
             entry, post, chat = row
-            if post.is_deleted or entry.stage not in {"sorted", "marking"}:
-                raise HTTPException(409, detail="Сначала отсортируйте пост")
+            if post.is_deleted or entry.stage not in {"filtered", "marking"}:
+                raise HTTPException(409, detail="Сначала отберите пост фильтром")
+            current_jobs = list((await session.execute(select(TaxonomyClassification).where(
+                TaxonomyClassification.pipeline_entry_id == entry.id,
+                TaxonomyClassification.text_sha256 == text_sha256(post.text),
+                TaxonomyClassification.status.in_(("complete", "media_only"))))).scalars())
+            if not current_jobs:
+                raise HTTPException(409, detail="Сначала обновите классификацию изменённого текста")
+            if entry.stage == "filtered" and not await has_marks(session, entry.id):
+                raise HTTPException(409, detail="У поста нет признаков отбора")
             active_job = (await session.execute(
                 select(TaxonomyClassification.id).where(
                     TaxonomyClassification.pipeline_entry_id == entry.id,

@@ -35,6 +35,8 @@ def format_result(taxonomy: dict, scores: dict[str, float], complexity: float) -
         for category in categories
     ]
     return {
+        "taxonomy_version": taxonomy.get("version"),
+        "scores": {label: round(score, 4) for label, score in scores.items()},
         "top_3": top,
         "features": [
             {"id": name, "name": FEATURE_NAMES[name], "score": round(scores[name], 4)}

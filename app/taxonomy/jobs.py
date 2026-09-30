@@ -53,7 +53,7 @@ async def mark_without_text(session: AsyncSession, entry: PipelineEntry, post: T
             pipeline_entry_id=entry.id, source_post_id=post.id, model_key="media", text_sha256=fingerprint
         )
         session.add(job)
-    if (job.status != status or job.text_sha256 != fingerprint or entry.stage not in {"sorted", "marking"}
+    if (job.status != status or job.text_sha256 != fingerprint or entry.stage not in {"sorted", "filtered", "marking"}
             or (job.result or {}).get("category") != ("only_media" if has_media else "empty")):
         now = datetime.now(timezone.utc)
         job.text_sha256 = fingerprint
@@ -70,6 +70,8 @@ async def mark_without_text(session: AsyncSession, entry: PipelineEntry, post: T
         entry.stage = "marking" if entry.marked_text_sha256 == fingerprint else "sorted"
         entry.status = "taxonomy_media_only" if has_media else "taxonomy_empty"
         entry.last_operation_at = now
+        from app.content.selection_filters import preserve_mark_stage
+        await preserve_mark_stage(session, entry)
     await session.flush()
     return job
 
@@ -99,7 +101,7 @@ async def enqueue(session: AsyncSession, entry_id: int, model_key: str) -> Taxon
     if row is None:
         raise HTTPException(404, detail="Карточка не найдена")
     entry, post, chat = row
-    if chat.folder_name != "MAX" or post.is_deleted or entry.stage not in {"received", "sorted", "marking"}:
+    if chat.folder_name != "MAX" or post.is_deleted or entry.stage not in {"received", "sorted", "filtered", "marking"}:
         raise HTTPException(409, detail="Карточка недоступна для сортировки")
     if not (post.text or "").strip():
         return await mark_without_text(session, entry, post)
@@ -154,13 +156,13 @@ async def enqueue(session: AsyncSession, entry_id: int, model_key: str) -> Taxon
 
 async def invalidate_if_edited(session: AsyncSession, post_id: int, text: str | None) -> bool:
     fingerprint = text_sha256(text)
+    entry = (await session.execute(
+        select(PipelineEntry).where(PipelineEntry.source_post_id == post_id).with_for_update()
+    )).scalar_one_or_none()
     jobs = list((await session.execute(
         select(TaxonomyClassification).where(TaxonomyClassification.source_post_id == post_id).with_for_update()
     )).scalars())
     changed = [job for job in jobs if job.text_sha256 != fingerprint]
-    entry = (await session.execute(
-        select(PipelineEntry).where(PipelineEntry.source_post_id == post_id).with_for_update()
-    )).scalar_one_or_none()
     marked_stale = bool(entry and entry.marked_text_sha256 and entry.marked_text_sha256 != fingerprint)
     if not changed and not marked_stale:
         return False
@@ -183,10 +185,12 @@ async def invalidate_if_edited(session: AsyncSession, post_id: int, text: str | 
             entry.marked_source_url = None
             entry.marked_text_sha256 = None
             entry.marked_at = None
-        if entry.stage in {"sorted", "marking"} and entry.classification_id is None:
+        if entry.stage in {"sorted", "filtered", "marking"} and entry.classification_id is None:
             entry.stage = "received"
             entry.status = "received"
             entry.last_operation_at = now
+            from app.content.selection_filters import preserve_mark_stage
+            await preserve_mark_stage(session, entry)
     return True
 
 

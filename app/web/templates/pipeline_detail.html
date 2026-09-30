@@ -23,8 +23,8 @@
 </article>
 {% endif %}
 
-{% if entry.stage in ('sorted', 'marking') %}
-<article id="source-marking">
+<article>{% set selection_state = taxonomy_state.get('selection') or {} %}{% include '_filter_marks.html' %}</article>
+<article id="source-marking" {% if entry.stage not in ('filtered', 'marking') %}hidden{% endif %}>
   <h2>Маркировка</h2>
   {% if entry.marked_text %}
     <p class="muted">Текст со ссылкой сохранён отдельно. Оригинал Telegram не изменён.</p>
@@ -33,7 +33,7 @@
   {% else %}
     <p class="muted">Добавляет к посту ссылку на исходное сообщение в Telegram.</p>
   {% endif %}
-  <button type="button" id="mark-source-button">{{ 'Обновить ссылку' if entry.marked_text else 'Добавить источник →' }}</button>
+  <button type="button" id="mark-source-button" {% if not taxonomy_state.get('can_mark_source') %}disabled{% endif %}>{{ 'Обновить ссылку' if entry.marked_text else 'Добавить источник →' }}</button>
   <p id="mark-source-feedback" aria-live="polite"></p>
 </article>
 <script>
@@ -54,7 +54,6 @@ document.getElementById('mark-source-button')?.addEventListener('click', async (
   }
 });
 </script>
-{% endif %}
 
 {% if taxonomy_enabled %}
 {% set taxonomies = taxonomy_state.get('taxonomies') or {} %}
@@ -86,6 +85,9 @@ document.getElementById('mark-source-button')?.addEventListener('click', async (
     const response = await fetch(`/api/pipeline/board-state?entry_ids=${section.dataset.entryId}`, {cache: 'no-store'});
     if (!response.ok) return;
     const state = (await response.json()).entries?.[section.dataset.entryId];
+    window.renderPostSelection?.(document.querySelector('[data-post-selection]'),state?.selection,state?.active);
+    document.getElementById('source-marking').hidden=!['filtered','marking'].includes(state?.stage);
+    document.getElementById('mark-source-button').disabled=!state?.can_mark_source;
     const job = state?.taxonomies?.[requested];
     if (!job) return;
     feedback.textContent = job.status === 'queued' ? 'В очереди…' : job.status === 'running' ? 'Модель работает…' : '';

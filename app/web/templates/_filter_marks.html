@@ -1,0 +1,5 @@
+<details class="post-selection" data-post-selection data-entry-id="{{ entry.id }}">
+  <summary>Признаки и фильтры <span data-mark-count>{{ (selection_state.get('marks') or [])|length }}</span></summary>
+  <div data-selection-body></div>
+  <script type="application/json" data-selection-initial>{{ selection_state|tojson }}</script>
+</details>

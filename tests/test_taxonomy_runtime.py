@@ -72,13 +72,14 @@ def test_edited_text_hides_outdated_result():
 async def test_edited_post_clears_saved_source_marking():
     job = SimpleNamespace(text_sha256=text_sha256("старый текст"), current_run_id=None,
                           status="complete", result={"top_3": []}, error=None, updated_at=None)
-    entry = SimpleNamespace(marked_text="старый текст с источником", marked_source_url="https://t.me/c/1/2",
+    entry = SimpleNamespace(id=42, marked_text="старый текст с источником", marked_source_url="https://t.me/c/1/2",
                             marked_text_sha256=text_sha256("старый текст"), marked_at=datetime.now(timezone.utc),
                             stage="marking", status="marked", classification_id=None, last_operation_at=None)
     session = MagicMock()
     session.execute = AsyncMock(side_effect=[
-        SimpleNamespace(scalars=lambda: [job]),
         SimpleNamespace(scalar_one_or_none=lambda: entry),
+        SimpleNamespace(scalars=lambda: [job]),
+        SimpleNamespace(scalar_one_or_none=lambda: None),
     ])
 
     assert await invalidate_if_edited(session, 42, "новый текст") is True
@@ -97,6 +98,7 @@ async def test_empty_media_is_sorted_without_queuing_either_model():
     session.execute = AsyncMock(side_effect=[
         SimpleNamespace(first=lambda: (entry, post, chat)),
         SimpleNamespace(scalar_one_or_none=lambda: None),
+        SimpleNamespace(scalar_one_or_none=lambda: None),
     ])
     session.flush = AsyncMock()
 
@@ -108,7 +110,7 @@ async def test_empty_media_is_sorted_without_queuing_either_model():
     assert job.attempts is None or job.attempts == 0
     assert entry.stage == "sorted"
     assert entry.status == "taxonomy_media_only"
-    assert session.execute.await_count == 2
+    assert session.execute.await_count == 3
 
 
 async def test_empty_without_media_is_not_mislabelled_as_media():

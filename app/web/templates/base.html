@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title or "Re Publisher" }}</title>
-  <link rel="stylesheet" href="/static/styles.css?v=taxonomy-runs-20260929-2">
+  <link rel="stylesheet" href="/static/styles.css?v=selection-20260930-1">
+  <script src="/static/post-selection.js?v=20260930-1" defer></script>
 </head>
 <body>
   {% set processing_enabled = request.app.state.settings.enable_processing %}
@@ -21,6 +22,8 @@
       <a href="/models">Модели</a>
       {% endif %}
       <a href="/pipeline">Конвейер</a>
+      <a href="/pipeline/filters">Фильтры</a>
+      <a href="/marks">Признаки</a>
       {% if processing_enabled %}
       <a href="/rewrite-progress">Прогресс рерайта</a>
       <a href="/pipeline-prompts">Промпты</a>
