@@ -23,6 +23,9 @@ x-app: &app
 services:
   web:
     <<: *app
+    environment:
+      DB_POOL_SIZE: "2"
+      DB_MAX_OVERFLOW: "0"
     command: [uvicorn, app.web.main:app, --host, 0.0.0.0, --port, "8080"]
     ports: ["127.0.0.1:18404:8080"]
     healthcheck:
@@ -42,8 +45,10 @@ services:
       COLLECT_COMMENTS: "false"
       AUTO_PUBLISH: "false"
       ENABLE_EXTERNAL_LLM: "false"
+      DB_POOL_SIZE: "3"
+      DB_MAX_OVERFLOW: "0"
     healthcheck:
-      test: [CMD, python, -m, app.runtime_status, collector]
+      test: [CMD, python, -c, "import json,time;d=json.load(open('/tmp/publisher-health-collector.json'));assert time.time()-d['heartbeat_at']<60 and not d['error'] and d['last_success_at'] and time.time()-d['last_success_at']<900"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -56,7 +61,7 @@ services:
       AUTO_PUBLISH: "false"
       ENABLE_EXTERNAL_LLM: "false"
       ENABLE_PROCESSING: "false"
-      DB_POOL_SIZE: "2"
+      DB_POOL_SIZE: "1"
       DB_MAX_OVERFLOW: "0"
     networks: [backend]
     volumes: ["./media:/app/media:ro"]
@@ -65,7 +70,7 @@ services:
     read_only: true
     tmpfs: [/tmp]
     healthcheck:
-      test: [CMD, python, -m, app.runtime_status, coordinator]
+      test: [CMD, python, -c, "import json,time;d=json.load(open('/tmp/publisher-health-coordinator.json'));assert time.time()-d['heartbeat_at']<60 and not d['error']"]
       interval: 20s
       timeout: 5s
       retries: 3
@@ -76,6 +81,8 @@ services:
     command: [python, -m, app.taxonomy.worker]
     environment:
       TAXONOMY_WORKER_MODEL: tfidf
+      DB_POOL_SIZE: "1"
+      DB_MAX_OVERFLOW: "0"
     networks: [backend]
     volumes:
       - ./models:/app/models:ro
@@ -96,6 +103,8 @@ services:
     command: [python, -m, app.taxonomy.worker]
     environment:
       TAXONOMY_WORKER_MODEL: minilm
+      DB_POOL_SIZE: "1"
+      DB_MAX_OVERFLOW: "0"
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
       OMP_NUM_THREADS: "1"

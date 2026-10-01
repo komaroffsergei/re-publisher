@@ -155,6 +155,7 @@ async def run_live(settings):
                             chat,
                             message,
                             collect_comments=False,
+                            update_state=False,
                         )
                         entry = (
                             await session.execute(

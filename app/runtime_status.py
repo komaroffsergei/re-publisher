@@ -1,6 +1,9 @@
 """Состояние сервисов в БД: проверяем живой цикл, а не наличие session-файла."""
 
 from datetime import datetime, timezone
+import json
+from pathlib import Path
+from tempfile import gettempdir
 from sqlalchemy.dialects.postgresql import insert
 from app.models import ServiceRuntime
 
@@ -24,10 +27,33 @@ async def heartbeat(factory, name, error=UNSET, success=False):
     if success:
         changes["last_success_at"] = now
     async with factory() as session:
-        await session.execute(
-            statement.on_conflict_do_update(index_elements=["name"], set_=changes)
-        )
+        row = (
+            await session.execute(
+                statement.on_conflict_do_update(
+                    index_elements=["name"], set_=changes
+                ).returning(
+                    ServiceRuntime.heartbeat_at,
+                    ServiceRuntime.last_success_at,
+                    ServiceRuntime.error,
+                )
+            )
+        ).one()
         await session.commit()
+    # Проверка контейнера читает маленький снимок успешной записи в БД.
+    # Не создаёт отдельный пул и не импортирует ORM в лимитированном процессе.
+    target = Path(gettempdir()) / f"publisher-health-{name}.json"
+    temporary = target.with_suffix(".tmp")
+    temporary.write_text(
+        json.dumps(
+            {
+                "heartbeat_at": row[0].timestamp(),
+                "last_success_at": row[1].timestamp() if row[1] else None,
+                "error": row[2],
+            }
+        ),
+        encoding="utf-8",
+    )
+    temporary.replace(target)
 
 
 async def check_health(name):

@@ -17,7 +17,7 @@ from app.logging_setup import setup_logging
 from app.sync import run_service, sync_folder, sync_folder_full_history
 from app.telegram_client import create_telegram_client, secure_session_permissions
 
-app = typer.Typer(no_args_is_help=True)
+app = typer.Typer(no_args_is_help=True, pretty_exceptions_show_locals=False)
 
 
 def safe_text(value: Any, *, stream=None) -> str:
