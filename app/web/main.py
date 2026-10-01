@@ -48,6 +48,7 @@ from app.taxonomy.jobs import (
     public_run,
 )
 from app.web.selection_routes import register_filter_routes
+from app.web.publication_routes import register_publication_routes
 from app.web.source_media import (
     album_primary,
     downloaded_media_path,
@@ -100,6 +101,7 @@ def create_app() -> FastAPI:
     app.state.settings = settings
     app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
     register_filter_routes(app, require_auth, session_factory, templates)
+    register_publication_routes(app, require_auth, session_factory, templates)
     register_routes(app)
     return app
 

@@ -15,7 +15,7 @@ def taxonomy_catalog() -> dict:
               for category in taxonomy["categories"]]
     labels += [{"id": child["id"], "name": child["name"], "parent": category["id"]}
                for category in taxonomy["categories"] for child in category["subcategories"]]
-    labels += [{"id": key, "name": FEATURE_NAMES[key], "parent": None, "kind": "feature"}
+    labels += [{"id": key, "name": taxonomy.get('feature_names', {}).get(key, FEATURE_NAMES.get(key, key)), "parent": None, "kind": "feature"}
                for key in taxonomy["binary_features"]]
     return {"version": taxonomy["version"], "labels": labels}
 

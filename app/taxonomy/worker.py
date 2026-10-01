@@ -15,7 +15,7 @@ from app.config import get_settings
 from app.db import create_engine, create_session_factory
 from app.models import PipelineEntry, TaxonomyClassification, TaxonomyRun, TelegramPost
 from app.taxonomy.inference import TaxonomyModel
-from app.taxonomy.jobs import MODEL_VERSIONS, text_sha256
+from app.taxonomy.jobs import MODEL_KEYS, text_sha256
 
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ async def claim_next(factory, model_key: str) -> int | None:
             return job.id
 
 
-async def finish_job(factory, job_id: int, result: dict | None, elapsed_ms: int, error: str | None = None) -> None:
+async def finish_job(factory, job_id: int, result: dict | None, elapsed_ms: int, error: str | None = None, model_version: str | None = None) -> None:
     async with factory() as session:
         async with session.begin():
             # Совпадает с порядком блокировок enqueue/apply: карточка, затем job.
@@ -74,6 +74,8 @@ async def finish_job(factory, job_id: int, result: dict | None, elapsed_ms: int,
             job.finished_at = now
             job.updated_at = now
             job.elapsed_ms = elapsed_ms
+            if model_version is not None:
+                job.model_version = model_version
             if post is None or post.is_deleted or job.text_sha256 != text_sha256(post.text):
                 job.status = "stale"
                 job.result = None
@@ -122,6 +124,7 @@ async def finish_job(factory, job_id: int, result: dict | None, elapsed_ms: int,
                     select(TaxonomyRun).where(TaxonomyRun.id == job.current_run_id).with_for_update()
                 )).scalar_one()
                 run.status = job.status
+                run.model_version = job.model_version
                 run.result = job.result
                 run.error = job.error
                 run.elapsed_ms = job.elapsed_ms
@@ -139,7 +142,7 @@ async def run() -> None:
     if not settings.taxonomy_enabled:
         raise RuntimeError("TAXONOMY_ENABLED must be true for the taxonomy worker")
     model_key = os.environ.get("TAXONOMY_WORKER_MODEL", "tfidf")
-    if model_key not in MODEL_VERSIONS:
+    if model_key not in MODEL_KEYS:
         raise RuntimeError("TAXONOMY_WORKER_MODEL must be tfidf or minilm")
     if model_key == "minilm":
         from app.taxonomy.minilm import MiniLmTaxonomyModel
@@ -181,7 +184,7 @@ async def run() -> None:
                     await finish_job(factory, job_id, None, 0)
                     continue
                 result = await asyncio.to_thread(model.classify, row[1].text or "")
-                await finish_job(factory, job_id, result, max(1, round((time.perf_counter() - started) * 1000)))
+                await finish_job(factory, job_id, result, max(1, round((time.perf_counter() - started) * 1000)), model_version=model.model_version)
             except Exception as exc:
                 logger.error("taxonomy classification failed: job_id=%s type=%s", job_id, type(exc).__name__)
                 await finish_job(factory, job_id, None, max(1, round((time.perf_counter() - started) * 1000)),

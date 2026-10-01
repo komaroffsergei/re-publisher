@@ -91,6 +91,8 @@ class Settings(BaseSettings):
     max_channel_chat_id: str | None = Field(default=None, validation_alias="MAX_CHANNEL_CHAT_ID")
     max_channel_link: str | None = Field(default=None, validation_alias="MAX_CHANNEL_LINK")
     max_api_base: str = Field(default="https://platform-api2.max.ru", validation_alias="MAX_API_BASE")
+    max_publisher_enabled: bool = Field(default=False, validation_alias="MAX_PUBLISHER_ENABLED")
+    max_bot_token_file: str = Field(default="/run/secrets/max_bot_token", validation_alias="MAX_BOT_TOKEN_FILE")
     max_publish_random_min_minutes: int = Field(default=1, ge=0, validation_alias="MAX_PUBLISH_RANDOM_MIN_MINUTES")
     max_publish_random_max_minutes: int = Field(default=20, ge=1, validation_alias="MAX_PUBLISH_RANDOM_MAX_MINUTES")
     max_publish_loop_interval_seconds: int = Field(default=30, ge=5, validation_alias="MAX_PUBLISH_LOOP_INTERVAL_SECONDS")

@@ -122,6 +122,31 @@ services:
       retries: 3
       start_period: 90s
 
+  publication-worker:
+    <<: *app
+    command: [python, -m, app.publication.worker]
+    environment:
+      MAX_PUBLISHER_ENABLED: ${MAX_PUBLISHER_ENABLED:-false}
+      MAX_BOT_TOKEN_FILE: /run/secrets/max_bot_token
+      AUTO_PUBLISH: "false"
+      ENABLE_EXTERNAL_LLM: "false"
+      DB_POOL_SIZE: "1"
+      DB_MAX_OVERFLOW: "0"
+    networks: [backend, edge]
+    volumes:
+      - ./media:/app/media:ro
+      - ./secrets/max_bot_token:/run/secrets/max_bot_token:ro
+    mem_limit: 256m
+    cpus: 0.25
+    read_only: true
+    tmpfs: [/tmp]
+    healthcheck:
+      test: [CMD, python, -c, "import json,time;d=json.load(open('/tmp/publisher-health-publication-worker.json'));assert time.time()-d['heartbeat_at']<60 and not d['error']"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
 networks:
   backend: {external: true, name: portfolio-backend}
   edge: {external: true, name: portfolio-edge}

@@ -1,0 +1,191 @@
+"""Isolated PostgreSQL outbox checks. No MAX sends or production data."""
+from types import SimpleNamespace
+
+import httpx
+import pytest
+from sqlalchemy import select, func
+
+import test_selection_integration as shared
+from app.content.post_preparation import mark_source
+from app.models import (MaxChannel, MaxObservedMessage, MaxPublicationDelivery, MaxPublicationPart, MaxPublicationRoute,
+                        PipelineEntry, TaxonomyClassification, TelegramPost, TelegramChat, SelectionFilterVersion)
+from app.publication.payload import sha_json
+from app.publication.service import enqueue_delivery, record_history, refresh_channel
+from app.publication.worker import process_one, watch_source_changes
+from app.publication.payload import PreparationError
+from app.taxonomy.jobs import text_sha256
+
+pytestmark = shared.pytestmark
+db, client = shared.db, shared.client
+
+
+async def ready(factory, client):
+    entry_id = await shared.seed(factory)
+    mark_id = (await client.post('/api/pipeline/marks', json={'name': 'QA publishing'})).json()['id']
+    rule = await shared.save_rule(client, mark_id)
+    await shared.flush_apps(factory)
+    async with factory() as session:
+        entry = await session.get(PipelineEntry, entry_id)
+        post = await session.get(TelegramPost, entry.source_post_id)
+        chat = await session.get(TelegramChat, post.chat_peer_id)
+        await mark_source(session, entry, post, chat)
+        entry.stage, entry.status = 'ready', 'ready'
+        version = await session.get(SelectionFilterVersion, rule['version_id'])
+        channel = MaxChannel(chat_id=-1, title='QA channel', access_state='ok', history_checked_at=shared.datetime.now(shared.timezone.utc))
+        session.add(channel); await session.flush()
+        route = MaxPublicationRoute(channel_id=channel.id, mark_id=mark_id, filter_id=rule['id'], enabled=True,
+            approved_version_id=version.id, quality_gate={'model_key': 'tfidf',
+                'expression_sha256': sha_json(version.expression), 'test_matched': 50, 'test_correct': 45,
+                'train_positive': 1000, 'model_version': 'qa-v1', 'test_sha256': 'a' * 64, 'split_sha256': 'b' * 64})
+        session.add(route)
+        job = await session.scalar(select(TaxonomyClassification).where(
+            TaxonomyClassification.pipeline_entry_id == entry_id, TaxonomyClassification.model_key == 'tfidf'))
+        job.model_version = 'qa-v1'
+        await session.commit()
+        return entry_id, route.id
+
+
+class FakeMax:
+    """Transport fixture only; never used by application runtime."""
+    def __init__(self): self.sent = []
+    async def identity(self): return 123
+    async def send(self, chat_id, text, attachments, reply_mid=None):
+        message = {'body': {'mid': 'mid.' + str(len(self.sent) + 1), 'text': text, 'attachments': []},
+                   'recipient': {'chat_id': chat_id}, 'url': 'https://max.ru/qa/1'}
+        self.sent.append(message)
+        return message
+    async def get_message(self, mid): return next(m for m in self.sent if m['body']['mid'] == mid)
+
+
+async def test_outbox_sends_once_and_persists_readback(db, client):
+    entry_id, route_id = await ready(db, client)
+    async with db() as session:
+        route = await session.get(MaxPublicationRoute, route_id)
+        delivery_id = await enqueue_delivery(session, entry_id, route, '.')
+        assert await enqueue_delivery(session, entry_id, route, '.') is None
+        await session.commit()
+    api = FakeMax()
+    assert await process_one(db, api, '.')
+    await process_one(db, api, '.')
+    assert len(api.sent) == 1
+    async with db() as session:
+        assert (await session.get(MaxPublicationDelivery, delivery_id)).status == 'delivered'
+        assert (await session.get(PipelineEntry, entry_id)).stage == 'published'
+        part = await session.scalar(select(MaxPublicationPart))
+        assert part.mid == 'mid.1' and part.verified_at
+
+
+async def test_restart_with_mid_rechecks_without_sending(db, client):
+    entry_id, route_id = await ready(db, client)
+    api = FakeMax()
+    async with db() as session:
+        delivery_id = await enqueue_delivery(session, entry_id, await session.get(MaxPublicationRoute, route_id), '.')
+        await session.flush()
+        part = await session.scalar(select(MaxPublicationPart))
+        message = await api.send(-1, part.request['text'], [])
+        part.mid, part.status = message['body']['mid'], 'sent'
+        await session.commit()
+    await process_one(db, api, '.')
+    assert len(api.sent) == 1
+    async with db() as session: assert (await session.get(MaxPublicationDelivery, delivery_id)).status == 'delivered'
+
+
+async def test_interrupted_send_is_unknown_and_not_repeated(db, client):
+    entry_id, route_id = await ready(db, client)
+    async with db() as session:
+        ident = await enqueue_delivery(session, entry_id, await session.get(MaxPublicationRoute, route_id), '.')
+        await session.flush()
+        part = await session.scalar(select(MaxPublicationPart)); part.status = 'sending'
+        await session.commit()
+    api = FakeMax()
+    await process_one(db, api, '.')
+    await process_one(db, api, '.')
+    assert not api.sent
+    async with db() as session: assert (await session.get(MaxPublicationDelivery, ident)).status == 'unknown'
+    response = await client.post(f'/api/publication/deliveries/{ident}/retry', json={})
+    assert response.status_code == 409
+
+
+async def test_owner_api_is_protected_and_cross_origin_actions_are_rejected(db, client):
+    assert (await client.get('/api/publication', auth=None)).status_code == 401
+    assert (await client.get('/publication')).status_code == 200
+    assert (await client.post('/api/publication/automatic', json={'enabled': True}, headers={'Origin': 'https://other.example'})).status_code == 403
+    assert (await client.post('/api/publication/automatic', json={'enabled': True})).status_code == 409
+
+
+async def test_preview_rejects_source_already_hidden_in_channel_markup(db, client):
+    entry_id, route_id = await ready(db, client)
+    async with db() as session:
+        route = await session.get(MaxPublicationRoute, route_id)
+        entry = await session.get(PipelineEntry, entry_id)
+        channel_id, url = route.channel_id, entry.marked_source_url
+    await record_history(db, channel_id, [{'body': {'mid': 'mid.old', 'text': 'Earlier publication',
+        'markup': [{'type': 'link', 'url': url}, {'type': 'link', 'url': None}]}}])
+    result = await client.post('/api/publication/batches/preview', json={'title': 'QA preview',
+        'items': [{'entry_id': entry_id, 'route_id': route_id}]})
+    assert result.status_code == 200
+    assert result.json()['manifest']['items'] == []
+    assert len(result.json()['rejected']) == 1
+
+
+async def test_two_routes_send_once_each_before_post_is_published(db, client):
+    entry_id, route_id = await ready(db, client)
+    async with db() as session:
+        first = await session.get(MaxPublicationRoute, route_id)
+        second_channel = MaxChannel(chat_id=-2, title='QA second', access_state='ok',
+            history_checked_at=shared.datetime.now(shared.timezone.utc))
+        session.add(second_channel); await session.flush()
+        second = MaxPublicationRoute(channel_id=second_channel.id, filter_id=first.filter_id,
+            mark_id=first.mark_id, approved_version_id=first.approved_version_id,
+            quality_gate=first.quality_gate, enabled=True)
+        session.add(second); await session.flush()
+        await enqueue_delivery(session, entry_id, first, '.')
+        await enqueue_delivery(session, entry_id, second, '.')
+        await session.commit()
+    api = FakeMax()
+    await process_one(db, api, '.')
+    async with db() as session: assert (await session.get(PipelineEntry, entry_id)).stage == 'ready'
+    await process_one(db, api, '.')
+    await process_one(db, api, '.')
+    assert len(api.sent) == 2
+    assert {m['recipient']['chat_id'] for m in api.sent} == {-1, -2}
+    async with db() as session: assert (await session.get(PipelineEntry, entry_id)).stage == 'published'
+
+
+async def test_changed_source_stops_pending_send_and_is_shown_after_delivery(db, client):
+    entry_id, route_id = await ready(db, client)
+    async with db() as session:
+        delivery_id = await enqueue_delivery(session, entry_id, await session.get(MaxPublicationRoute, route_id), '.')
+        await session.commit()
+    api = FakeMax()
+    await process_one(db, api, '.')
+    async with db() as session:
+        entry = await session.get(PipelineEntry, entry_id)
+        post = await session.get(TelegramPost, entry.source_post_id)
+        post.text += ' Updated source'
+        await session.commit()
+    await watch_source_changes(db)
+    await process_one(db, api, '.')
+    assert len(api.sent) == 1
+    async with db() as session:
+        assert (await session.get(MaxPublicationDelivery, delivery_id)).source_changed_at
+    history = (await client.get(f'/api/publication/history?entry_id={entry_id}')).json()
+    assert history['deliveries'][0]['source_changed_at']
+
+
+async def test_history_page_overlap_preserves_equal_timestamps(db, client):
+    _, route_id = await ready(db, client)
+    async with db() as session:
+        channel_id = (await session.get(MaxPublicationRoute, route_id)).channel_id
+    def message(i, stamp): return {'timestamp': stamp, 'body': {'mid': f'mid.{i}', 'text': 'QA'}}
+    class HistoryMax:
+        def __init__(self): self.cursors = []
+        async def check_channel(self, chat_id): return {'permissions': ['write', 'read_all_messages'], 'title': 'QA'}
+        async def history(self, chat_id, cursor=None):
+            self.cursors.append(cursor)
+            return [message(i, 2000 - i) for i in range(100)] if cursor is None else [message(99, 1901), message(100, 1901), message(101, 1900)]
+    api = HistoryMax()
+    await refresh_channel(db, api, channel_id)
+    assert api.cursors == [None, 1901]
+    async with db() as session:
+        assert await session.scalar(select(func.count()).select_from(MaxObservedMessage)) == 102

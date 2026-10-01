@@ -17,10 +17,7 @@ from app.models import (
     TelegramPost,
 )
 
-MODEL_VERSIONS = {
-    "tfidf": "codex-tfidf-maxplus1000-20260929",
-    "minilm": "codex-minilm-maxplus1000-20260929-e2",
-}
+MODEL_KEYS = ('tfidf', 'minilm')
 
 
 def text_sha256(text: str | None) -> str:
@@ -56,6 +53,8 @@ async def mark_without_text(
 ) -> TaxonomyClassification | None:
     """Immediately sort textless posts; semantic workers never see them."""
     if (post.text or "").strip():
+        return None
+    if entry.stage == 'published':
         return None
     fingerprint = text_sha256(post.text)
     job = (
@@ -130,7 +129,7 @@ async def sort_textless_post(
 async def enqueue(
     session: AsyncSession, entry_id: int, model_key: str
 ) -> TaxonomyClassification:
-    if model_key not in MODEL_VERSIONS:
+    if model_key not in MODEL_KEYS:
         raise HTTPException(404, detail="Модель не найдена")
     row = (
         await session.execute(
@@ -194,13 +193,14 @@ async def enqueue(
         )
         session.add(job)
     job.text_sha256 = fingerprint
-    job.model_version = MODEL_VERSIONS[model_key]
+    # Worker запишет версию фактически загруженных весов. До этого она неизвестна.
+    job.model_version = None
     run = TaxonomyRun(
         pipeline_entry_id=entry.id,
         source_post_id=post.id,
         model_key=model_key,
         text_sha256=fingerprint,
-        model_version=MODEL_VERSIONS[model_key],
+        model_version=None,
         status="queued",
         queued_at=now,
     )
@@ -271,7 +271,12 @@ async def invalidate_if_edited(
     if entry is not None:
         entry.ready_at = None
         entry.auto_manual_mark = False
-        if entry.auto_enabled:
+        if entry.stage == 'published':
+            # История доставки сохраняется. Редактирование не создаёт новую
+            # публикацию уже отправленного источника.
+            entry.auto_state = 'done'
+            entry.status = 'published_source_changed'
+        elif entry.auto_enabled:
             entry.auto_state = "pending"
             entry.auto_attempts = 0
             entry.auto_retry_at = None

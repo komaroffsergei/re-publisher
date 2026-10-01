@@ -14,7 +14,8 @@ from app.config import get_settings
 from app.db import create_engine, create_session_factory, session_scope
 from app.import_comparison import load_cohort
 from app.models import PipelineEntry, TaxonomyClassification, TelegramPost
-from app.taxonomy.jobs import MODEL_VERSIONS, enqueue, text_sha256
+from app.taxonomy.jobs import enqueue, text_sha256
+from app.taxonomy.artifact import artifact_version, checkpoint_path, configured_artifact
 
 
 async def main() -> None:
@@ -43,6 +44,11 @@ async def main() -> None:
         if len(entries) != args.expect or len(set(entries)) != args.expect:
             raise RuntimeError("comparison cohort does not map to unique pipeline cards")
         for model_key in ("tfidf", "minilm"):
+            directory = Path(settings.taxonomy_model_dir)
+            weights = configured_artifact(directory, model_key)
+            if model_key == 'minilm':
+                weights = checkpoint_path(weights, json.loads((weights / 'training.json').read_text(encoding='utf-8')))
+            expected_version = artifact_version(directory, model_key, weights)
             for entry_id in entries:
                 async with session_scope(factory) as session:
                     previous = (await session.execute(
@@ -53,7 +59,7 @@ async def main() -> None:
                     )).first()
                     if previous is not None:
                         job, current_text = previous
-                        if (job.model_version == MODEL_VERSIONS[model_key]
+                        if ((job.model_version == expected_version or job.status in {'queued', 'running'})
                                 and job.text_sha256 == text_sha256(current_text)
                                 and job.status in {"queued", "running", "complete"}):
                             continue

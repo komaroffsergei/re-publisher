@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, Numeric, Text, UniqueConstraint, func, text
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, Numeric, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -736,3 +736,124 @@ class SearchDocument(TimestampMixin, Base):
     source_chat: Mapped[str | None] = mapped_column(Text, index=True, nullable=True)
     language: Mapped[str | None] = mapped_column(Text, nullable=True)
     tsv: Mapped[Any | None] = mapped_column(TSVECTOR, nullable=True)
+
+
+class MaxChannel(TimestampMixin, Base):
+    __tablename__ = 'max_channels'
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    public_url: Mapped[str | None] = mapped_column(Text)
+    access_state: Mapped[str] = mapped_column(Text, server_default='unchecked', nullable=False)
+    permissions: Mapped[list] = mapped_column(JSONB, server_default='[]', nullable=False)
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    check_requested: Mapped[bool] = mapped_column(Boolean, server_default='true', nullable=False)
+    history_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
+    last_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class MaxPublicationRoute(TimestampMixin, Base):
+    __tablename__ = 'max_publication_routes'
+    __table_args__ = (UniqueConstraint('mark_id', 'channel_id', name='uq_max_route_mark_channel'),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    mark_id: Mapped[int] = mapped_column(ForeignKey('filter_marks.id'), nullable=False)
+    filter_id: Mapped[int] = mapped_column(ForeignKey('selection_filters.id'), nullable=False)
+    channel_id: Mapped[int] = mapped_column(ForeignKey('max_channels.id'), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, server_default='false', nullable=False)
+    approved_version_id: Mapped[int | None] = mapped_column(ForeignKey('selection_filter_versions.id'))
+    # Заполняется из проверенного отчёта обучения, не из формы настройки маршрута.
+    quality_gate: Mapped[dict] = mapped_column(JSONB, server_default='{}', nullable=False)
+
+
+class MaxPublicationControl(Base):
+    __tablename__ = 'max_publication_control'
+    name: Mapped[str] = mapped_column(Text, primary_key=True)
+    automatic_enabled: Mapped[bool] = mapped_column(Boolean, server_default='false', nullable=False)
+    enabled_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    scan_after_entry_id: Mapped[int] = mapped_column(BigInteger, server_default='0', nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class MaxPublicationBatch(TimestampMixin, Base):
+    __tablename__ = 'max_publication_batches'
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, server_default='prepared', nullable=False)
+    manifest: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    manifest_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class MaxPublicationDelivery(TimestampMixin, Base):
+    __tablename__ = 'max_publication_deliveries'
+    __table_args__ = (
+        UniqueConstraint('channel_id', 'source_key', name='uq_max_delivery_channel_source'),
+        UniqueConstraint('channel_id', 'content_sha256', name='uq_max_delivery_channel_content'),
+        CheckConstraint("status IN ('queued','preparing','sending','verifying','delivered','failed','unknown','stale','cancelled')", name='ck_max_delivery_status'),
+        Index('ix_max_delivery_queue', 'status', 'next_attempt_at', 'id'),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    entry_id: Mapped[int] = mapped_column(ForeignKey('pipeline_entries.id'), nullable=False, index=True)
+    route_id: Mapped[int] = mapped_column(ForeignKey('max_publication_routes.id'), nullable=False)
+    channel_id: Mapped[int] = mapped_column(ForeignKey('max_channels.id'), nullable=False)
+    batch_id: Mapped[int | None] = mapped_column(ForeignKey('max_publication_batches.id'))
+    source_key: Mapped[str] = mapped_column(Text, nullable=False)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    text_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    payload_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(Text, server_default='queued', nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, server_default='0', nullable=False)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    source_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class MaxPublicationPart(TimestampMixin, Base):
+    __tablename__ = 'max_publication_parts'
+    __table_args__ = (UniqueConstraint('delivery_id', 'number', name='uq_max_part_delivery_number'),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    delivery_id: Mapped[int] = mapped_column(ForeignKey('max_publication_deliveries.id'), nullable=False, index=True)
+    number: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(Text, server_default='prepared', nullable=False)
+    request: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    # Upload-токены нужны для повторного запроса после attachment.not.ready.
+    # Эти поля никогда не возвращаются в web API и не попадают в журналы.
+    attachments: Mapped[list] = mapped_column(JSONB, server_default='[]', nullable=False)
+    mid: Mapped[str | None] = mapped_column(Text, unique=True)
+    public_url: Mapped[str | None] = mapped_column(Text)
+    send_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    receipt_sha256: Mapped[str | None] = mapped_column(Text)
+    absence_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    absence_scan_sha256: Mapped[str | None] = mapped_column(Text)
+    absence_scan_count: Mapped[int] = mapped_column(Integer, server_default='0', nullable=False)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
+
+
+class MaxPublicationAttempt(Base):
+    __tablename__ = 'max_publication_attempts'
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    part_id: Mapped[int] = mapped_column(ForeignKey('max_publication_parts.id'), nullable=False, index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    outcome: Mapped[str] = mapped_column(Text, nullable=False)
+    http_status: Mapped[int | None] = mapped_column(Integer)
+    error_code: Mapped[str | None] = mapped_column(Text)
+    request_sha256: Mapped[str | None] = mapped_column(Text)
+
+
+class MaxObservedMessage(Base):
+    __tablename__ = 'max_observed_messages'
+    __table_args__ = (UniqueConstraint('channel_id', 'mid', name='uq_max_observed_channel_mid'),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    channel_id: Mapped[int] = mapped_column(ForeignKey('max_channels.id'), nullable=False)
+    mid: Mapped[str] = mapped_column(Text, nullable=False)
+    source_url: Mapped[str | None] = mapped_column(Text, index=True)
+    text_sha256: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

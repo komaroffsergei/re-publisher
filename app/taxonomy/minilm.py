@@ -11,6 +11,7 @@ from torch import nn
 from transformers import AutoConfig, AutoModel, AutoTokenizer
 
 from app.taxonomy.inference import format_result
+from app.taxonomy.artifact import artifact_version, checkpoint_path, configured_artifact
 
 
 class Classifier(nn.Module):
@@ -34,7 +35,7 @@ class Classifier(nn.Module):
 class MiniLmTaxonomyModel:
     def __init__(self, model_dir: str | Path):
         model_dir = Path(model_dir)
-        candidate = model_dir / "minilm-v2"
+        candidate = configured_artifact(model_dir, 'minilm')
         self.taxonomy = json.loads((model_dir / "taxonomy.json").read_text(encoding="utf-8"))
         training = json.loads((candidate / "training.json").read_text(encoding="utf-8"))
         expected = [category["id"] for category in self.taxonomy["categories"]]
@@ -47,15 +48,22 @@ class MiniLmTaxonomyModel:
             raise ValueError("MiniLM max_length is outside the supported range")
         torch.set_num_threads(1)
         self.names = training["names"]
+        self.calibration = training.get('calibration', {})
         self.tokenizer = AutoTokenizer.from_pretrained(candidate / "tokenizer", local_files_only=True)
         config = AutoConfig.from_pretrained(candidate, local_files_only=True)
         self.model = Classifier(AutoModel.from_config(config), len(expected))
-        self.model.load_state_dict(load_file(str(candidate / "epoch-2.safetensors")))
+        weights = checkpoint_path(candidate, training)
+        self.model_version = artifact_version(model_dir, 'minilm', weights)
+        self.model.load_state_dict(load_file(str(weights)))
         self.model.eval()
 
     def classify(self, text: str) -> dict:
         with torch.inference_mode():
             encoded = self.tokenizer(text, truncation=True, max_length=self.max_length, return_tensors="pt")
             logits, complexity = self.model(encoded)
+            for index, name in enumerate(self.names):
+                parameters = self.calibration.get(name)
+                if parameters:
+                    logits[0, index] = parameters['a'] * logits[0, index] + parameters['b']
             scores = dict(zip(self.names, torch.sigmoid(logits)[0].tolist()))
             return format_result(self.taxonomy, scores, float(complexity[0]))

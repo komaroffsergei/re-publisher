@@ -732,6 +732,40 @@ summary {
   border-top: 1px solid var(--line);
   padding-top: 8px;
 }
+#max-channels {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+#max-channels .max-channel-card {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+}
+#max-channels p {
+  overflow-wrap: anywhere;
+}
+#max-history table {
+  min-width: 680px;
+  white-space: normal;
+}
+#max-counts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0 22px;
+}
+@media (max-width: 760px) {
+  #max-channels {
+    grid-template-columns: 1fr;
+  }
+  #max-counts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  #max-counts .metric {
+    padding: 14px;
+  }
+}
 .queue-stats {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

@@ -20,7 +20,7 @@
                 {% if source_media %}<div class="source-media-grid">{% for media in source_media %}<figure>{% if media.url and media.kind=="image" %}<a href="{{ media.url }}" target="_blank" rel="noopener"><img src="{{ media.url }}"
      alt="Медиа сообщения {{ media.message_id }}"
      loading="lazy"></a>{% elif media.url and media.kind=="video" %}<video controls preload="metadata" src="{{ media.url }}"></video>{% elif media.url %}<a class="button secondary" href="{{ media.url }}">Скачать {{ media.filename }}</a>{% else %}<p class="notice">Медиа не скачано · {{ media.status }}</p>{% endif %}<figcaption>Сообщение {{ media.message_id }}{% if media.size_bytes %} · {{ (media.size_bytes/1048576)|round(1) }} МБ{% endif %}</figcaption></figure>{% endfor %}</div>{% endif %}
-            </article><article><header class="section-heading"><h2>Сравнение моделей</h2><span class="muted">Результаты сохранены в БД</span></header>{% set compare_entry_id = entry.id %}{% include "_taxonomy_compare.html" %}</article></div>
+            </article><article><header class="section-heading"><h2>Сравнение моделей</h2><span class="muted">Результаты сохранены в БД</span></header>{% set compare_entry_id = entry.id %}{% include "_taxonomy_compare.html" %}</article><article><h2>Доставка в MAX</h2><a href="/publication">Назначения и сохранённые публикации →</a><div data-max-deliveries="{{ entry.id }}"></div></article></div>
             <aside class="post-inspector"><article class="pipeline-record"
          data-entry-id="{{ entry.id }}"
          data-stage="{{ entry.stage }}"><h2>Обработка</h2><p class="muted">Повторные прогоны сохраняются отдельно.</p>{% include "_post_actions.html" %}{% set selection_state = state.selection %}{% include "_filter_marks.html" %}
@@ -36,4 +36,5 @@
         </div>
         <script src="/static/taxonomy-compare.js?v=automation-1" defer></script>
         <script src="/static/pipeline.js?v=automation-1" defer></script>
+<script src="/static/max-publication.js?v=max-3" defer></script>
 {% endblock %}
