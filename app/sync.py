@@ -568,11 +568,15 @@ async def mark_messages_deleted(session: AsyncSession, chat_peer_id: int, messag
         ))
         .values(stage="received", status="source_deleted", marked_text=None,
                 marked_source_url=None, marked_text_sha256=None, marked_at=None,
-                last_operation_at=func.now(), updated_at=func.now())
+                last_operation_at=func.now(), updated_at=func.now(), ready_at=None,
+                auto_state="stopped", last_error="Исходное сообщение удалено")
     )
 
 
 async def run_service(settings: Settings, folder_name: str | None = None) -> None:
+    if settings.collector_mode == "new_only":
+        from app.live_collector import run_live
+        return await run_live(settings)
     folder = folder_name or settings.folder_name
     client = create_telegram_client(settings)
     engine = create_engine(settings)

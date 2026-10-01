@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -31,6 +32,7 @@ class Settings(BaseSettings):
     sync_lookback_hours: int = Field(default=168, ge=1, validation_alias="SYNC_LOOKBACK_HOURS")
     media_max_bytes: int = Field(default=104_857_600, ge=1, validation_alias="MEDIA_MAX_BYTES")
     folder_refresh_seconds: int = Field(default=300, ge=10, validation_alias="FOLDER_REFRESH_SECONDS")
+    collector_mode: Literal["window", "new_only"] = Field(default="window", validation_alias="COLLECTOR_MODE")
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
 
     cache_dir: str = Field(default="./cache", validation_alias="CACHE_DIR")

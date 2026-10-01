@@ -1,0 +1,9 @@
+{% for column in columns %}<section class="kanban-column kanban-column-{{ column.stage }}"
+         id="{{ column.stage }}"
+         data-column="{{ column.stage }}"><header class="column-heading"><h2>{{ column.name }}</h2><span class="badge">{{ column.count }}</span></header><div class="column-cards">
+        {% for entry,post,chat in column.rows %}{% set state = states[entry.id] %}<article class="kanban-card pipeline-record"
+         data-entry-id="{{ entry.id }}"
+         data-stage="{{ entry.stage }}"><header class="card-heading"><a href="/pipeline/{{ entry.id }}">#{{ entry.id }}</a><span class="muted">{{ post.date.strftime("%d.%m · %H:%M") if post.date else 'Без даты' }}</span></header><p class="chat-name">{{ chat.title or 'Чат' }}{% if post.media_type %} · медиа{% endif %}</p><a class="post-excerpt" href="/pipeline/{{ entry.id }}">{{ (post.text or 'Без текста · только медиа')[:420] }}</a>{% include "_post_actions.html" %}{% set selection_state = state.selection %}{% set selection_compact = true %}{% include "_filter_marks.html" %}<button class="secondary source-action"
+        type="button"
+        data-mark-source
+        {% if not state.can_mark_source %}hidden disabled{% endif %}>Источник →</button><p class="action-feedback" data-action-feedback role="status"></p><script type="application/json" data-record-initial>{{ state|tojson }}</script></article>{% endfor %}</div><p class="column-empty" {% if column.rows %}hidden{% endif %}>Нет карточек в этой выборке.</p></section>{% endfor %}

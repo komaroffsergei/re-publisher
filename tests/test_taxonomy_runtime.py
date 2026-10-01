@@ -74,7 +74,7 @@ async def test_edited_post_clears_saved_source_marking():
                           status="complete", result={"top_3": []}, error=None, updated_at=None)
     entry = SimpleNamespace(id=42, marked_text="старый текст с источником", marked_source_url="https://t.me/c/1/2",
                             marked_text_sha256=text_sha256("старый текст"), marked_at=datetime.now(timezone.utc),
-                            stage="marking", status="marked", classification_id=None, last_operation_at=None)
+                            stage="marking", status="marked", classification_id=None, last_operation_at=None, auto_enabled=False)
     session = MagicMock()
     session.execute = AsyncMock(side_effect=[
         SimpleNamespace(scalar_one_or_none=lambda: entry),
@@ -128,7 +128,7 @@ async def test_empty_without_media_is_not_mislabelled_as_media():
 
 
 async def test_repeated_classification_creates_another_persisted_run():
-    entry = SimpleNamespace(id=57, stage="sorted", status="taxonomy_sorted", last_operation_at=None)
+    entry = SimpleNamespace(id=57, stage="sorted", status="taxonomy_sorted", last_operation_at=None, auto_enabled=False)
     post = SimpleNamespace(id=57, text="текст поста", is_deleted=False)
     chat = SimpleNamespace(folder_name="MAX")
     existing = SimpleNamespace(

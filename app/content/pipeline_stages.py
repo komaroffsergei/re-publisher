@@ -21,6 +21,6 @@ PIPELINE_STAGE_LABELS = {
     PIPELINE_STAGE_SORTED: "Отсортирован",
     PIPELINE_STAGE_FILTERED: "Отфильтрован",
     PIPELINE_STAGE_MARKING: "Маркировка",
-    PIPELINE_STAGE_READY: "Готов к публикации",
+    PIPELINE_STAGE_READY: "На публикацию",
     PIPELINE_STAGE_PUBLISHED: "Опубликован",
 }

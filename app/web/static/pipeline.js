@@ -9,6 +9,7 @@
     sorted: "Отсортирован",
     filtered: "Отфильтрован",
     marking: "Маркировка",
+    ready: "На публикацию",
   };
   const names = { tfidf: "TF-IDF", minilm: "MiniLM", media: "Медиа" };
   const statuses = {
@@ -70,12 +71,29 @@
       source.disabled = busy || !state.can_mark_source;
       if (!detail) source.hidden = !state.can_mark_source;
     }
+    const autoError = record.querySelector("[data-automation-error]");
+    if (autoError) {autoError.hidden = !state.auto_error; autoError.textContent = state.auto_error || "";}
+    const retry = record.querySelector("[data-automation-retry]");
+    if (retry) {retry.hidden = !state.can_retry; retry.disabled = busy || !state.can_retry;}
+    const ready = record.querySelector("[data-ready-at]");
+    if (ready) ready.textContent = state.ready_at ? `Подготовлен · ${new Date(state.ready_at).toLocaleString("ru-RU")} · отправка выключена` : "";
     if (detail) {
+      record.querySelector("[data-marked-text]").textContent = state.marked_text || "";
+      const url = record.querySelector("[data-marked-url]");
+      if (url.dataset.url !== (state.marked_source_url || "")) {
+        url.dataset.url = state.marked_source_url || "";
+        url.replaceChildren();
+        if (state.marked_source_url) {
+          const link = document.createElement("a"); link.href = state.marked_source_url;
+          link.textContent = state.marked_source_url; link.target = "_blank"; link.rel = "noopener"; url.append(link);
+        }
+      }
       root.querySelector("[data-stage-label]").textContent =
         stages[state.stage] || state.stage;
       record.querySelector("#source-marking").hidden = ![
         "filtered",
         "marking",
+        "ready",
       ].includes(state.stage);
     } else if (previous !== state.stage) {
       if (root.dataset.filtered === "true") {
@@ -116,20 +134,33 @@
   async function refresh() {
     if (loading || document.hidden) return;
     const current = records();
-    if (!current.length) return;
+    if (detail && !current.length) return;
+    if (current.some((record) => record.pendingAction)) return;
     loading = true;
     try {
-      const data = await request(
-        `/api/pipeline/board-state?entry_ids=${current.map((node) => node.dataset.entryId).join(",")}`,
-      );
-      for (const record of current) {
-        const state = data.entries[record.dataset.entryId];
-        if (state) render(record, state);
+      if (detail) {
+        const data = await request(`/api/pipeline/board-state?entry_ids=${current.map(node => node.dataset.entryId).join(",")}`);
+        for (const record of current) {
+          const state = data.entries[record.dataset.entryId];
+          if (state) render(record, state);
+        }
+      } else {
+        const response = await fetch(`/api/pipeline/board-fragment${location.search}`, {cache:"no-store",credentials:"same-origin"});
+        if (!response.ok) throw new Error("Ошибка обновления доски");
+        const fragment = document.createElement("template"); fragment.innerHTML = await response.text();
+        if (records().some(record => record.pendingAction)) return;
+        // Позицию берём после запроса: пользователь мог скроллить во время загрузки.
+        const x = window.scrollX, y = window.scrollY, boardX = root.scrollLeft;
+        const columns = new Map(Array.from(root.querySelectorAll("[data-column]")).map(col => [col.dataset.column, col.scrollTop]));
+        const expanded = new Set(Array.from(root.querySelectorAll("details[open]")).map(node => `${node.closest(".pipeline-record")?.dataset.entryId}:${node.className}`));
+        root.replaceChildren(fragment.content);
+        initialize();
+        root.querySelectorAll("details").forEach(node => {if (expanded.has(`${node.closest(".pipeline-record")?.dataset.entryId}:${node.className}`)) node.open = true;});
+        root.querySelectorAll("[data-column]").forEach(col => col.scrollTop = columns.get(col.dataset.column) || 0);
+        root.scrollLeft = boardX; window.scrollTo(x,y);
       }
       const status = document.querySelector("[data-poll-status]");
-      if (status)
-        status.textContent =
-          "Состояния обновлены. Счётчики и выборка — при открытии страницы.";
+      if (status) status.textContent = "Карточки и счётчики обновлены. Отправка выключена.";
     } catch (error) {
       const status =
         document.querySelector("[data-poll-status]") ||
@@ -140,14 +171,17 @@
       loading = false;
     }
   }
+  function initialize() {
   for (const record of records()) {
     render(
       record,
       JSON.parse(record.querySelector("[data-record-initial]").textContent),
     );
   }
+  }
+  initialize();
   root.addEventListener("click", async (event) => {
-    const button = event.target.closest("[data-taxonomy], [data-mark-source]");
+    const button = event.target.closest("[data-taxonomy], [data-mark-source], [data-automation-retry]");
     if (!button || button.disabled) return;
     const record = button.closest(".pipeline-record");
     if (record.pendingAction) return;
@@ -156,14 +190,16 @@
     feedback.textContent = "";
     const state = record.currentState;
     record
-      .querySelectorAll("[data-taxonomy], [data-mark-source]")
+      .querySelectorAll("[data-taxonomy], [data-mark-source], [data-automation-retry]")
       .forEach((node) => {
         node.disabled = true;
       });
     record.classList.add("is-busy");
     record.setAttribute("aria-busy", "true");
     try {
-      if (button.hasAttribute("data-mark-source")) {
+      if (button.hasAttribute("data-automation-retry")) {
+        await request(`/api/pipeline/${record.dataset.entryId}/automation/retry`, {});
+      } else if (button.hasAttribute("data-mark-source")) {
         const data = await request(
           `/api/pipeline/${record.dataset.entryId}/mark-source`,
           {},

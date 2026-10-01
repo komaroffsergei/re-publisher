@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 import secrets
-from contextlib import asynccontextmanager, suppress
-from datetime import datetime
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlsplit
@@ -19,9 +18,11 @@ from sqlalchemy import func, select, text
 
 from app.config import Settings, get_settings
 from app.content.pipeline_stages import PIPELINE_STAGE_LABELS
-from app.content.selection_filters import application_loop, has_marks, load_states
+from app.content.selection_filters import load_states
 from app.content.selection_rules import taxonomy_catalog
-from app.content.source_marking import marked_post_text, telegram_post_source_url
+from app.content.source_marking import telegram_post_source_url
+from app.content.post_preparation import mark_source, album_posts
+from app.pipeline_coordinator import reset_retry
 from app.db import create_engine, create_session_factory
 from app.logging_setup import setup_logging
 from app.models import (
@@ -37,6 +38,7 @@ from app.models import (
     TelegramChat,
     TelegramPost,
     TelegramSyncState,
+    ServiceRuntime,
 )
 from app.taxonomy.jobs import (
     enqueue as enqueue_taxonomy,
@@ -44,7 +46,6 @@ from app.taxonomy.jobs import (
 from app.taxonomy.jobs import (
     public_job,
     public_run,
-    text_sha256,
 )
 from app.web.selection_routes import register_filter_routes
 from app.web.source_media import (
@@ -57,7 +58,7 @@ web_cli = typer.Typer(no_args_is_help=True)
 security = HTTPBasic(auto_error=False)
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
-BOARD_STAGES = ("received", "sorted", "filtered", "marking")
+BOARD_STAGES = ("received", "sorted", "filtered", "marking", "ready")
 
 
 def display_time(value):
@@ -91,14 +92,8 @@ def create_app() -> FastAPI:
         app.state.db_engine = engine
         app.state.session_factory = create_session_factory(engine=engine)
         try:
-            filter_task = asyncio.create_task(
-                application_loop(app.state.session_factory)
-            )
             yield
         finally:
-            filter_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await filter_task
             await engine.dispose()
 
     app = FastAPI(title="Re Publisher", lifespan=lifespan)
@@ -201,6 +196,13 @@ async def board_state_for_entries(app, session, entry_ids):
             "selection": selection,
             "deleted": post.is_deleted,
             "marked_source_url": entry.marked_source_url,
+            "marked_text": entry.marked_text,
+            "ready_at": iso_datetime(entry.ready_at),
+            "auto_state": entry.auto_state if entry.auto_enabled else None,
+            "auto_error": entry.last_error if entry.auto_enabled else None,
+            "can_retry": entry.auto_enabled
+            and entry.auto_state in {"blocked", "stopped"}
+            and not post.is_deleted,
             "updated_at": iso_datetime(entry.updated_at),
             "last_operation_at": iso_datetime(entry.last_operation_at),
             "can_mark_source": not active
@@ -280,7 +282,36 @@ async def dashboard_data(session):
             .where(TelegramChat.folder_name == "MAX")
         )
     ).one()
+    service_rows = list((await session.execute(select(ServiceRuntime))).scalars())
+    automation = dict(
+        (
+            await session.execute(
+                select(PipelineEntry.auto_state, func.count())
+                .where(
+                    PipelineEntry.auto_enabled.is_(True),
+                    PipelineEntry.source_post_id.in_(scope),
+                )
+                .group_by(PipelineEntry.auto_state)
+            )
+        ).all()
+    )
     return {
+        "services": [
+            {
+                "name": row.name,
+                "alive": bool(
+                    row.heartbeat_at
+                    and (datetime.now(timezone.utc) - row.heartbeat_at).total_seconds()
+                    < 60
+                    and not row.error
+                ),
+                "error": row.error,
+                "last_success_at": iso_datetime(row.last_success_at),
+                "started_at": iso_datetime(row.started_at),
+            }
+            for row in service_rows
+        ],
+        "automation": automation,
         "stages": dict(stage_rows),
         "total": sum(count for _, count in stage_rows),
         "jobs": [
@@ -352,76 +383,65 @@ def register_routes(app: FastAPI) -> None:
             if row is None or row[2].folder_name != "MAX":
                 raise HTTPException(404, detail="Карточка не найдена")
             entry, post, chat = row
-            if post.is_deleted or entry.stage not in {"filtered", "marking"}:
-                raise HTTPException(409, detail="Сначала отберите пост фильтром")
-            current_jobs = list(
-                (
-                    await session.execute(
-                        select(TaxonomyClassification).where(
-                            TaxonomyClassification.pipeline_entry_id == entry.id,
-                            TaxonomyClassification.text_sha256
-                            == text_sha256(post.text),
-                            TaxonomyClassification.status.in_(
-                                ("complete", "media_only")
-                            ),
-                        )
-                    )
-                ).scalars()
-            )
-            if not current_jobs:
-                raise HTTPException(
-                    409, detail="Сначала обновите классификацию изменённого текста"
-                )
-            if entry.stage == "filtered" and not await has_marks(session, entry.id):
-                raise HTTPException(409, detail="У поста нет признаков отбора")
-            active_job = (
-                await session.execute(
-                    select(TaxonomyClassification.id)
-                    .where(
-                        TaxonomyClassification.pipeline_entry_id == entry.id,
-                        TaxonomyClassification.status.in_(("queued", "running")),
-                    )
-                    .limit(1)
-                )
-            ).scalar_one_or_none()
-            if active_job:
-                raise HTTPException(409, detail="Дождитесь завершения сортировки")
-            source_post = post
-            if post.grouped_id is not None:
-                album_posts = list(
-                    (
-                        await session.execute(
-                            select(TelegramPost)
-                            .where(
-                                TelegramPost.chat_peer_id == post.chat_peer_id,
-                                TelegramPost.grouped_id == post.grouped_id,
-                                TelegramPost.is_deleted.is_(False),
-                            )
-                            .order_by(TelegramPost.message_id)
-                        )
-                    ).scalars()
-                )
-                if album_posts:
-                    source_post = album_primary(album_posts)
-            source_url = telegram_post_source_url(source_post, chat)
-            if not source_url:
-                raise HTTPException(
-                    409, detail="У этого чата нет ссылки на сообщение Telegram"
-                )
-            entry.marked_text = marked_post_text(post.text, source_url)
-            entry.marked_source_url = source_url
-            entry.marked_text_sha256 = text_sha256(post.text)
-            entry.marked_at = datetime.now(ZoneInfo("Europe/Moscow"))
-            entry.last_operation_at = entry.marked_at
-            entry.stage = "marking"
-            entry.status = "marked"
+            await mark_source(session, entry, post, chat, manual=True)
+            reset_retry(entry)
             await session.commit()
             return {
                 "stage": entry.stage,
                 "status": entry.status,
-                "source_url": source_url,
+                "source_url": entry.marked_source_url,
                 "marked_text": entry.marked_text,
             }
+
+    @app.post("/api/pipeline/{entry_id}/automation/retry", dependencies=[auth])
+    async def automation_retry(request: Request, entry_id: int):
+        origin = request.headers.get("origin")
+        if (
+            origin
+            and urlsplit(origin).hostname
+            != request.headers.get("host", "").split(":")[0]
+        ):
+            raise HTTPException(403, "Неверный источник запроса")
+        if (
+            request.headers.get("content-type", "").split(";")[0].strip()
+            != "application/json"
+        ):
+            raise HTTPException(415, "Нужен application/json")
+        async with session_factory(request)() as session:
+            row = (
+                await session.execute(
+                    select(PipelineEntry, TelegramPost)
+                    .join(TelegramPost, TelegramPost.id == PipelineEntry.source_post_id)
+                    .join(
+                        TelegramChat, TelegramChat.peer_id == TelegramPost.chat_peer_id
+                    )
+                    .where(
+                        PipelineEntry.id == entry_id, TelegramChat.folder_name == "MAX"
+                    )
+                    .with_for_update(of=PipelineEntry)
+                )
+            ).first()
+            if not row:
+                raise HTTPException(404, "Карточка не найдена")
+            entry, post = row
+            if (
+                post.is_deleted
+                or not entry.auto_enabled
+                or entry.auto_state not in {"blocked", "stopped"}
+            ):
+                raise HTTPException(
+                    409, "Повтор доступен только остановленной карточке"
+                )
+            for item in await album_posts(session, post):
+                if item.media_type and item.media_download_status in {
+                    "missing",
+                    "failed",
+                }:
+                    item.media_download_status = "pending"
+            reset_retry(entry)
+            entry.auto_state = "pending"
+            await session.commit()
+            return {"status": "pending"}
 
     @app.post("/api/pipeline/{entry_id}/taxonomy/{model_key}", dependencies=[auth])
     @app.post("/api/pipeline/{entry_id}/taxonomy", dependencies=[auth])
@@ -543,6 +563,9 @@ def register_routes(app: FastAPI) -> None:
         async with session_factory(request)() as session:
             return await dashboard_data(session)
 
+    @app.get(
+        "/api/pipeline/board-fragment", response_class=HTMLResponse, dependencies=[auth]
+    )
     @app.get("/pipeline", response_class=HTMLResponse, dependencies=[auth])
     async def pipeline(
         request: Request,
@@ -666,7 +689,9 @@ def register_routes(app: FastAPI) -> None:
             )
         return templates.TemplateResponse(
             request,
-            "pipeline.html",
+            "_board_columns.html"
+            if request.url.path.endswith("board-fragment")
+            else "pipeline.html",
             {
                 "columns": columns,
                 "states": states,

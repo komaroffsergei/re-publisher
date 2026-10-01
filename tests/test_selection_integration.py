@@ -55,7 +55,7 @@ async def db():
         await conn.run_sync(Base.metadata.create_all)
         await conn.execute(
             text(
-                "TRUNCATE filter_marks, selection_filters, telegram_chats, telegram_posts, pipeline_entries CASCADE"
+                "TRUNCATE service_runtime, filter_marks, selection_filters, telegram_chats, telegram_posts, pipeline_entries CASCADE"
             )
         )
     factory = async_sessionmaker(engine, expire_on_commit=False)

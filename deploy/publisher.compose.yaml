@@ -36,9 +36,37 @@ services:
     <<: *app
     command: [python, -m, app.main, run, --folder, MAX]
     networks: [backend, telegram-egress]
+    environment:
+      COLLECTOR_MODE: new_only
+      COLLECTOR_PROCESS_SAVED_POSTS: "false"
+      COLLECT_COMMENTS: "false"
+      AUTO_PUBLISH: "false"
+      ENABLE_EXTERNAL_LLM: "false"
     healthcheck:
-      test: [CMD-SHELL, "test -s /app/sessions/max_collector.session"]
+      test: [CMD, python, -m, app.runtime_status, collector]
       interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  pipeline-coordinator:
+    <<: *app
+    command: [python, -m, app.pipeline_coordinator]
+    environment:
+      AUTO_PUBLISH: "false"
+      ENABLE_EXTERNAL_LLM: "false"
+      ENABLE_PROCESSING: "false"
+      DB_POOL_SIZE: "2"
+      DB_MAX_OVERFLOW: "0"
+    networks: [backend]
+    volumes: ["./media:/app/media:ro"]
+    mem_limit: 256m
+    cpus: 0.25
+    read_only: true
+    tmpfs: [/tmp]
+    healthcheck:
+      test: [CMD, python, -m, app.runtime_status, coordinator]
+      interval: 20s
       timeout: 5s
       retries: 3
       start_period: 30s

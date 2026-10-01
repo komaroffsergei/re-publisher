@@ -25,7 +25,7 @@
          data-entry-id="{{ entry.id }}"
          data-stage="{{ entry.stage }}"><h2>Обработка</h2><p class="muted">Повторные прогоны сохраняются отдельно.</p>{% include "_post_actions.html" %}{% set selection_state = state.selection %}{% include "_filter_marks.html" %}
                 <section id="source-marking"
-                         {% if entry.stage not in ['filtered','marking'] %}hidden{% endif %}><h3>Маркировка</h3><p class="muted">Добавляем источник. Оригинал остаётся как был.</p><button type="button"
+                         {% if entry.stage not in ['filtered','marking','ready'] %}hidden{% endif %}><h3>Маркировка</h3><p class="muted">Добавляем источник. Оригинал остаётся как был.</p><button type="button"
         id="mark-source-button"
         data-mark-source
         {% if not state.can_mark_source %}disabled{% endif %}>Источник →</button><p data-marked-url>{% if entry.marked_source_url %}<a href="{{ entry.marked_source_url }}" target="_blank" rel="noopener">{{ entry.marked_source_url }}</a>{% endif %}</p><details {% if entry.marked_text %}open{% endif %}><summary>Текст с источником</summary><pre data-marked-text>{{ entry.marked_text or '' }}</pre></details></section>
@@ -34,6 +34,6 @@
                 </article>
             </aside>
         </div>
-        <script src="/static/taxonomy-compare.js?v=cleanup-2" defer></script>
-        <script src="/static/pipeline.js?v=cleanup-2" defer></script>
+        <script src="/static/taxonomy-compare.js?v=automation-1" defer></script>
+        <script src="/static/pipeline.js?v=automation-1" defer></script>
 {% endblock %}

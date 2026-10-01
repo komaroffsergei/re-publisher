@@ -3,7 +3,7 @@
     <section class="toolbar">
         <div>
             <h1>Конвейер</h1>
-            <p class="muted">Пост → категории → отбор по фильтрам → ссылка на источник.</p>
+            <p class="muted">Пост → категории → отбор по фильтрам → ссылка на источник → на публикацию.</p>
         </div>
         <a class="button secondary" href="/pipeline/filters">Настроить отбор</a>
     </section>
@@ -14,15 +14,7 @@
        {% if active %}checked{% endif %}>В работе</label><button type="submit">Показать</button><a href="/pipeline">Сбросить</a></form>
     <p class="sync-status"
        data-poll-status
-       role="status">Состояния обновляются автоматически. Счётчики и выборка — при открытии страницы.</p>
+       role="status">Карточки и счётчики обновляются каждые 5 секунд. Отправка в каналы выключена.</p>
     <section class="kanban-board"
              data-pipeline
-             data-filtered="{{ 'true' if q or mark or selection_filter or active else 'false' }}">{% for column in columns %}<section class="kanban-column kanban-column-{{ column.stage }}"
-         id="{{ column.stage }}"
-         data-column="{{ column.stage }}"><header class="column-heading"><h2>{{ column.name }}</h2><span class="badge">{{ column.count }}</span></header><div class="column-cards">
-        {% for entry,post,chat in column.rows %}{% set state = states[entry.id] %}<article class="kanban-card pipeline-record"
-         data-entry-id="{{ entry.id }}"
-         data-stage="{{ entry.stage }}"><header class="card-heading"><a href="/pipeline/{{ entry.id }}">#{{ entry.id }}</a><span class="muted">{{ post.date.strftime("%d.%m · %H:%M") if post.date else 'Без даты' }}</span></header><p class="chat-name">{{ chat.title or 'Чат' }}{% if post.media_type %} · медиа{% endif %}</p><a class="post-excerpt" href="/pipeline/{{ entry.id }}">{{ (post.text or 'Без текста · только медиа')[:420] }}</a>{% include "_post_actions.html" %}{% set selection_state = state.selection %}{% set selection_compact = true %}{% include "_filter_marks.html" %}<button class="secondary source-action"
-        type="button"
-        data-mark-source
-        {% if not state.can_mark_source %}hidden disabled{% endif %}>Источник →</button><p class="action-feedback" data-action-feedback role="status"></p><script type="application/json" data-record-initial>{{ state|tojson }}</script></article>{% endfor %}</div><p class="column-empty" {% if column.rows %}hidden{% endif %}>Нет карточек в этой выборке.</p></section>{% endfor %}</section><script src="/static/pipeline.js?v=cleanup-2" defer></script>{% endblock %}
+             data-filtered="{{ 'true' if q or mark or selection_filter or active else 'false' }}">{% include "_board_columns.html" %}</section><script src="/static/pipeline.js?v=automation-1" defer></script>{% endblock %}

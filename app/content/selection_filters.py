@@ -85,6 +85,10 @@ async def assign_mark(session, entry, version, evaluation, context: str):
                                action="assigned", dedup_key=dedup_key, created_at=now))
     await session.flush()
     await preserve_mark_stage(session, entry)
+    if entry.stage != "ready":
+        entry.auto_enabled = True
+        entry.auto_state = "pending"
+        entry.auto_retry_at = None
 
 
 async def evaluate_post(session, entry, post, version, context: str, job=None):
@@ -134,7 +138,7 @@ def scope_statement():
     return select(PipelineEntry, TelegramPost).join(TelegramPost, TelegramPost.id == PipelineEntry.source_post_id).join(
         TelegramChat, TelegramChat.peer_id == TelegramPost.chat_peer_id).where(
         TelegramChat.folder_name == "MAX", TelegramPost.is_deleted.is_(False),
-        PipelineEntry.stage.in_(("sorted", "filtered", "marking")))
+        PipelineEntry.stage.in_(("sorted", "filtered", "marking", "ready")))
 
 
 async def preview(session, version):

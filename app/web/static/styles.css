@@ -421,7 +421,7 @@ summary {
 }
 .kanban-board {
   display: grid;
-  grid-template-columns: repeat(4, minmax(290px, 1fr));
+  grid-template-columns: repeat(5, minmax(290px, 1fr));
   gap: 16px;
   overflow-x: auto;
   align-items: start;
@@ -862,7 +862,7 @@ th {
     flex: 1;
   }
   .kanban-board {
-    grid-template-columns: repeat(4, calc(100vw - 60px));
+    grid-template-columns: repeat(5, calc(100vw - 60px));
   }
   .queue-stats {
     grid-template-columns: 1fr 1fr;
@@ -877,3 +877,5 @@ th {
     padding: 16px;
   }
 }
+
+.automation-status small {display:block;color:#64748b;margin-top:8px}.kanban-column-ready .column-heading {border-color:#34a67b}.kanban-column-ready {background:#f1faf5}.dashboard-stages {grid-template-columns:repeat(5,minmax(0,1fr))}@media(max-width:700px){.dashboard-stages{grid-template-columns:repeat(2,minmax(0,1fr))}}

@@ -15,6 +15,21 @@ class TimestampMixin:
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+class ServiceRuntime(Base):
+    __tablename__ = "service_runtime"
+    name: Mapped[str] = mapped_column(Text, primary_key=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    heartbeat_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_success_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class TelegramChat(TimestampMixin, Base):
     __tablename__ = "telegram_chats"
 
@@ -75,6 +90,13 @@ class TelegramComment(TimestampMixin, Base):
 class TelegramSyncState(Base):
     __tablename__ = "telegram_sync_state"
 
+    live_member: Mapped[bool] = mapped_column(
+        Boolean, server_default="false", nullable=False
+    )
+    live_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    reconciled_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     chat_peer_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     last_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -469,6 +491,27 @@ class RewritePromptVersion(Base):
 
 class PipelineEntry(TimestampMixin, Base):
     __tablename__ = "pipeline_entries"
+
+    auto_enabled: Mapped[bool] = mapped_column(
+        Boolean, server_default="false", nullable=False, index=True
+    )
+    auto_state: Mapped[str] = mapped_column(
+        Text, server_default="pending", nullable=False
+    )
+    auto_attempts: Mapped[int] = mapped_column(
+        Integer, server_default="0", nullable=False
+    )
+    auto_retry_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    auto_phase: Mapped[str | None] = mapped_column(Text, nullable=True)
+    auto_manual_mark: Mapped[bool] = mapped_column(
+        Boolean, server_default="false", nullable=False
+    )
+    ready_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     __table_args__ = (
         UniqueConstraint("content_item_id", name="uq_pipeline_entries_content_item"),
         UniqueConstraint("source_post_id", name="uq_pipeline_entries_source_post"),
