@@ -42,6 +42,7 @@ def test_inference_keeps_independent_subcategory_scores_and_all_required_feature
     scores = {"first": .8, "first.child": .2, "second": .6, "second.child": .7,
               "third": .4, "third.child": .1, "fourth": .3, **dict.fromkeys(features, .25)}
     model = TaxonomyModel.__new__(TaxonomyModel)
+    model.input_guard = None
     model.taxonomy = {"categories": categories, "binary_features": features}
     model.bundle = {"word": FakeVectorizer(), "char": FakeVectorizer(),
                     "label_names": list(scores), "models": {name: FakeModel(score) for name, score in scores.items()},

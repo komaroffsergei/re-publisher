@@ -27,6 +27,7 @@ dependencies = [
     "scikit-learn==1.9.0",
     "SQLAlchemy[asyncio]>=2.0,<3",
     "Telethon>=1.36,<2",
+    "tokenizers==0.22.2",
     "typer>=0.12,<1",
     "trafilatura>=1.9,<3",
     "uvicorn[standard]>=0.30,<1",

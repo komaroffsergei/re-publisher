@@ -83,6 +83,9 @@ class OcrEngine:
     def __init__(self, directory: str | Path):
         # Импортируется только в OCR-процессе; web не загружает ONNX-модели.
         from rapidocr import EngineType, LangDet, LangRec, ModelType, OCRVersion, RapidOCR
+        from importlib.metadata import version
+        if version("rapidocr") != "3.9.2" or version("onnxruntime") != "1.30.0":
+            raise ValueError("OCR package versions differ from the pinned runtime")
 
         directory = Path(directory).resolve()
         manifest_path = directory / "ocr-manifest.json"

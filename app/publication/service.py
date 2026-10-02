@@ -9,7 +9,8 @@ from sqlalchemy import select, or_
 from sqlalchemy.dialects.postgresql import insert
 
 from app.content.post_preparation import album_posts, readiness_error
-from app.content.selection_filters import assessment
+from app.content.selection_filters import current_assessment
+from app.taxonomy.profiles import profile_of
 from app.models import (FilterMark, MaxChannel, MaxObservedMessage, MaxPublicationBatch,
                         MaxPublicationControl, MaxPublicationDelivery, MaxPublicationPart,
                         MaxPublicationRoute, PipelineEntry, PostFilterMark, SelectionFilter,
@@ -74,9 +75,10 @@ async def prepare(session, entry_id: int, route, media_dir: str) -> dict:
         raise PreparationError('Пользовательский лейбл снят')
     job = await session.scalar(select(TaxonomyClassification).where(
         TaxonomyClassification.pipeline_entry_id == entry.id,
-        TaxonomyClassification.model_key == version.model_key))
+        TaxonomyClassification.model_key == version.model_key,
+        TaxonomyClassification.profile == profile_of(version)))
     if (not job or job.model_version != route.quality_gate['model_version']
-            or assessment(version, job, post)['outcome'] != 'matched'):
+            or (await current_assessment(session, version, job, post))['outcome'] != 'matched'):
         raise PreparationError('Нет актуального совпадения проверенной версии модели')
     items = list((await session.execute(select(TelegramPost).where(
         TelegramPost.chat_peer_id == post.chat_peer_id, TelegramPost.grouped_id == post.grouped_id)

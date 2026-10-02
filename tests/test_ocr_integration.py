@@ -111,3 +111,32 @@ async def test_humor_filter_does_not_enqueue_ocr_for_old_buffer(db, client):
     async with db() as session:
         assert (await session.execute(select(func.count(OcrJob.entry_id)))).scalar_one() == 0
         assert (await session.execute(select(func.count(FilterApplication.id)))).scalar_one() == 0
+
+
+async def test_media_changed_outside_collector_cannot_pass_filter_or_readiness(db, client, tmp_path):
+    from app.content.selection_filters import current_assessment
+    from app.content.post_preparation import readiness_error
+    from app.taxonomy.jobs import text_sha256
+    entry_id = await shared.seed(db)
+    settings = configure(tmp_path)
+    await media_post(db, entry_id, settings)
+    async with db() as session:
+        await enqueue(session, entry_id, "tfidf", "humor_ocr")
+        await session.commit()
+    await process(db, settings, Reader(), *(await claim(db)))
+    async with db() as session:
+        entry = await session.get(PipelineEntry, entry_id)
+        post = await session.get(TelegramPost, entry.source_post_id)
+        job = (await session.execute(select(TaxonomyClassification).where(
+            TaxonomyClassification.pipeline_entry_id == entry_id,
+            TaxonomyClassification.profile == "humor_ocr"))).scalar_one()
+        job.status = "complete"
+        job.result = {"taxonomy_version":"humor_ocr_v1", "scores":{"is_joke":.99,"input_has_context":.99}}
+        version = SimpleNamespace(profile="humor_ocr", expression={"op":"condition", "label_id":"is_joke", "compare":"gte", "threshold":92})
+        assert (await current_assessment(session, version, job, post))["outcome"] == "matched"
+        # Collector ещё не получил событие, подпись не менялась, оценки высокие.
+        Path(post.media_path).write_bytes(b"replacement attachment")
+        assert (await current_assessment(session, version, job, post))["outcome"] == "unknown"
+        entry.marked_source_url = "https://t.me/example/1"
+        entry.marked_text_sha256 = text_sha256(post.text)
+        assert "OCR" in await readiness_error(session, entry, post, settings.media_dir)

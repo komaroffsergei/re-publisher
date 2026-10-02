@@ -37,6 +37,10 @@ class MiniLmTaxonomyModel:
         model_dir = Path(model_dir)
         candidate = configured_artifact(model_dir, 'minilm')
         self.taxonomy = json.loads((model_dir / "taxonomy.json").read_text(encoding="utf-8"))
+        self.input_guard = None
+        if self.taxonomy.get("profile") == "humor_ocr":
+            from app.taxonomy.input_contract import InputGuard
+            self.input_guard = InputGuard(model_dir)
         training = json.loads((candidate / "training.json").read_text(encoding="utf-8"))
         expected = [category["id"] for category in self.taxonomy["categories"]]
         expected += [child["id"] for category in self.taxonomy["categories"] for child in category["subcategories"]]
@@ -46,6 +50,8 @@ class MiniLmTaxonomyModel:
         self.max_length = int(training["max_length"])
         if not 128 <= self.max_length <= 512:
             raise ValueError("MiniLM max_length is outside the supported range")
+        if self.input_guard and self.max_length != 512:
+            raise ValueError("humor_ocr requires the full 512-token input contract")
         torch.set_num_threads(1)
         self.names = training["names"]
         self.calibration = training.get('calibration', {})
@@ -59,8 +65,8 @@ class MiniLmTaxonomyModel:
 
     def classify(self, text: str) -> dict:
         with torch.inference_mode():
-            if self.taxonomy.get("profile") == "humor_ocr" and len(self.tokenizer.encode(text, truncation=False)) > self.max_length:
-                raise ValueError("Вход длиннее 512 токенов; нужен ручной разбор")
+            if self.input_guard:
+                self.input_guard.check(text)
             encoded = self.tokenizer(text, truncation=True, max_length=self.max_length, return_tensors="pt")
             logits, complexity = self.model(encoded)
             for index, name in enumerate(self.names):

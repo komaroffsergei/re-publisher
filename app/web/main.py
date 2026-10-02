@@ -538,14 +538,22 @@ def register_routes(app: FastAPI) -> None:
         if request.method == "POST":
             await input_data(request, EmptyInput)
         async with session_factory(request)() as session:
-            row = (await session.execute(select(PipelineEntry, TelegramPost).join(TelegramPost,
+            statement = select(PipelineEntry, TelegramPost).join(TelegramPost,
                 TelegramPost.id == PipelineEntry.source_post_id).join(TelegramChat,
                 TelegramChat.peer_id == TelegramPost.chat_peer_id).where(PipelineEntry.id == entry_id,
-                TelegramChat.folder_name == "MAX").with_for_update(of=PipelineEntry))).first()
+                TelegramChat.folder_name == "MAX")
+            if request.method == "POST":
+                statement = statement.with_for_update(of=PipelineEntry)
+            row = (await session.execute(statement)).first()
             if not row:
                 raise HTTPException(404, "Карточка не найдена")
             entry, post = row
             if request.method == "POST":
+                active = (await session.execute(select(TaxonomyClassification.id).where(
+                    TaxonomyClassification.pipeline_entry_id == entry_id,
+                    TaxonomyClassification.status.in_(("queued", "loading", "running"))).limit(1))).scalar_one_or_none()
+                if active:
+                    raise HTTPException(409, "Дождитесь завершения классификации")
                 await enqueue_ocr(session, entry, post, request.app.state.settings, retry=True)
                 await session.commit()
             return await public_ocr(session, entry_id, post, request.app.state.settings)

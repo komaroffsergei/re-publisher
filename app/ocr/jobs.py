@@ -108,6 +108,15 @@ async def public_ocr(session, entry_id, post, settings):
             "finished_at": r.finished_at.isoformat() if r.finished_at else None} for r in rows]}
 
 
+async def classification_input_current(session, post, job, settings):
+    """Оценка подписи не подтверждает актуальность OCR другого профиля."""
+    from app.taxonomy.profiles import profile_of
+    if not job or profile_of(job) != "humor_ocr":
+        return True
+    value, run = await current_input(session, job.pipeline_entry_id, post, settings)
+    return value is not None and run is not None and run.input_sha256 == job.input_sha256
+
+
 async def invalidate_ocr(session, post, settings):
     """Изменение части альбома отзывает результаты и готовность всей группы."""
     from app.models import TaxonomyClassification, TaxonomyRun

@@ -5,7 +5,7 @@
         <meta name="viewport" content="width=device-width,initial-scale=1">
         <title>{{ title or "Re Publisher" }}</title>
         <link rel="stylesheet" href="/static/styles.css?v=max-4">
-        <script src="/static/post-selection.js?v=preview-1" defer></script>
+        <script src="/static/post-selection.js?v=humor-ocr-2" defer></script>
     </head>
     <body><header class="topbar"><a class="brand" href="/dashboard">re<span>:</span>publisher</a><nav aria-label="Основная навигация">{% for href,name in [('/dashboard','Обзор'),('/pipeline','Конвейер'),('/pipeline/filters','Фильтры'),('/marks','Признаки'),('/publication','MAX · отправка')] %}<a href="{{ href }}"
    {% if request.url.path==href %}aria-current="page"{% endif %}>{{ name }}</a>{% endfor %}</nav><span class="workspace-label">MAX · личная рабочая область</span></header><main class="page">{% block content %}{% endblock %}</main></body></html>

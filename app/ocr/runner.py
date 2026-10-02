@@ -6,7 +6,11 @@ from app.ocr.engine import OcrEngine
 
 
 def main():
-    engine = OcrEngine(get_settings().ocr_model_dir)
+    try:
+        engine = OcrEngine(get_settings().ocr_model_dir)
+    except Exception as exc:
+        print(json.dumps({"error": "OCR initialization: " + type(exc).__name__}), flush=True)
+        return
     for line in sys.stdin:
         try:
             value = json.loads(line)

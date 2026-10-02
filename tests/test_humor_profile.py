@@ -65,3 +65,16 @@ def test_ocr_cannot_read_file_outside_its_media_mount(tmp_path):
     inside = root / "image.png"; inside.write_bytes(b"fixture")
     assert safe_path(outside, root) is None
     assert safe_path(inside, root) == inside.resolve()
+
+
+def test_input_contract_accepts_512_tokens_and_never_silently_truncates(tmp_path):
+    from tokenizers import Tokenizer, models, pre_tokenizers
+    from app.taxonomy.input_contract import InputGuard, InputNeedsReview
+    tokenizer = Tokenizer(models.WordLevel({"[UNK]": 0, "текст": 1}, unk_token="[UNK]"))
+    tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
+    tokenizer.enable_truncation(512)
+    tokenizer.save(str(tmp_path / "input-tokenizer.json"))
+    guard = InputGuard(tmp_path)
+    guard.check(" ".join(["текст"] * 512))
+    with pytest.raises(InputNeedsReview):
+        guard.check(" ".join(["текст"] * 513))

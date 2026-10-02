@@ -20,7 +20,7 @@ from app.taxonomy.jobs import enqueue, text_sha256, mark_without_text
 from app.taxonomy.profiles import profile_of, job_key
 from app.content.selection_filters import (
     application_loop,
-    assessment,
+    current_assessment,
     has_marks,
     needs_backfill,
 )
@@ -90,6 +90,10 @@ async def advance(session, entry, post, chat, versions, settings):
         return
     for key, profile in required:
         job = jobs.get(job_key(key, profile))
+        if job and profile == "humor_ocr" and job.status in {"complete", "media_only", "empty"}:
+            from app.ocr.jobs import classification_input_current
+            if not await classification_input_current(session, post, job, settings):
+                job.status = "stale"
         if job and job.status == "needs_review":
             failure(entry, "ocr", job.error or "OCR требует ручного разбора")
             return
@@ -113,10 +117,10 @@ async def advance(session, entry, post, chat, versions, settings):
             await enqueue(session, entry.id, key, profile)
             entry.auto_retry_at = now + timedelta(seconds=2)
             return
-    matched = any(
-        assessment(v, jobs.get(job_key(v.model_key, profile_of(v))), post)["outcome"] == "matched"
-        for v in versions
-    )
+    matched = False
+    for version in versions:
+        values = await current_assessment(session, version, jobs.get(job_key(version.model_key, profile_of(version))), post)
+        matched = matched or values["outcome"] == "matched"
     if not manual and (not matched or not await has_marks(session, entry.id)):
         entry.auto_state = "done"
         return

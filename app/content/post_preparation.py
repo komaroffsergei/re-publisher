@@ -42,6 +42,11 @@ async def mark_source(session, entry, post, chat, manual=False):
     )
     if any(j.status in {"ocr", "queued", "loading", "running"} for j in jobs):
         raise HTTPException(409, "Дождитесь завершения сортировки")
+    from app.config import get_settings
+    from app.ocr.jobs import classification_input_current
+    for job in jobs:
+        if job.status in {"complete", "media_only", "empty"} and not await classification_input_current(session, post, job, get_settings()):
+            raise HTTPException(409, "OCR или медиа изменились; обновите классификацию")
     if not any(
         j.status in {"complete", "media_only"}
         and j.text_sha256 == text_sha256(post.text)
@@ -72,6 +77,15 @@ async def mark_source(session, entry, post, chat, manual=False):
 async def readiness_error(session, entry, post, media_dir):
     if post.is_deleted:
         return "Исходное сообщение удалено"
+    from app.config import get_settings
+    from app.ocr.jobs import classification_input_current
+    jobs = (await session.execute(select(TaxonomyClassification).where(
+        TaxonomyClassification.pipeline_entry_id == entry.id,
+        TaxonomyClassification.profile == "humor_ocr",
+        TaxonomyClassification.status.in_(("complete", "media_only", "empty"))))).scalars()
+    for job in jobs:
+        if not await classification_input_current(session, post, job, get_settings()):
+            return "OCR или медиа изменились; обновите классификацию"
     if not entry.marked_source_url or entry.marked_text_sha256 != text_sha256(
         post.text
     ):

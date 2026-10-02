@@ -59,6 +59,18 @@ def assessment(version, job, post):
             "trace": trace, "run_id": run_id, "input_key": input_key, "text_sha256": fingerprint}
 
 
+async def current_assessment(session, version, job, post):
+    values = assessment(version, job, post)
+    if profile_of(version) == "humor_ocr" and job and values["outcome"] != "unknown":
+        from app.config import get_settings
+        from app.ocr.jobs import classification_input_current
+        if not await classification_input_current(session, post, job, get_settings()):
+            values["outcome"] = "unknown"
+            values["trace"]["reason"] = "OCR или вложения изменились; нужно пересчитать"
+            values["input_key"] += ":stale-ocr"
+    return values
+
+
 async def assign_mark(session, entry, version, evaluation, context: str):
     # Один контекст (запуск модели/задание применения) назначает признак один раз.
     # Повтор партии после сбоя не отменяет выполненное пользователем ручное снятие.
@@ -99,7 +111,7 @@ async def evaluate_post(session, entry, post, version, context: str, job=None):
             TaxonomyClassification.pipeline_entry_id == entry.id,
             TaxonomyClassification.model_key == version.model_key,
             TaxonomyClassification.profile == profile_of(version)))).scalar_one_or_none()
-    values = assessment(version, job, post)
+    values = await current_assessment(session, version, job, post)
     evaluation = (await session.execute(select(FilterEvaluation).where(
         FilterEvaluation.entry_id == entry.id, FilterEvaluation.version_id == version.id,
         FilterEvaluation.input_key == values["input_key"]))).scalar_one_or_none()
@@ -163,7 +175,7 @@ async def preview(session, version):
             PostFilterMark.active.is_(True)))).scalars())
         for entry, post in rows:
             job = jobs.get(entry.id)
-            values = assessment(version, job, post)
+            values = await current_assessment(session, version, job, post)
             counts[values["outcome"]] += 1
             if values["outcome"] == "matched" and entry.id not in marked:
                 counts["new_marks"] += 1
@@ -319,7 +331,7 @@ async def load_states(session, entries: dict):
     # Текущие совпадения считаются без записи: ручное снятие не отменяется polling.
     for entry_id, (_entry, _state, post) in entries.items():
         for version in versions:
-            values = assessment(version, jobs.get((entry_id, version.model_key, profile_of(version))), post)
+            values = await current_assessment(session, version, jobs.get((entry_id, version.model_key, profile_of(version))), post)
             result[entry_id]["checks"].append({"filter_id": version.filter_id, "name": version.name,
                 "version": version.number, "model_key": version.model_key, "outcome": values["outcome"],
                 "assigned": values["trace"].get("assigned"),

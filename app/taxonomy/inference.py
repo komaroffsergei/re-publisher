@@ -48,6 +48,10 @@ class TaxonomyModel:
         self.model_version = artifact_version(model_dir, 'tfidf', weights)
         self.bundle = joblib.load(weights)
         self.taxonomy = json.loads((model_dir / "taxonomy.json").read_text(encoding="utf-8"))
+        self.input_guard = None
+        if self.taxonomy.get("profile") == "humor_ocr":
+            from app.taxonomy.input_contract import InputGuard
+            self.input_guard = InputGuard(model_dir)
         if self.bundle["taxonomy_version"] != self.taxonomy["version"]:
             raise ValueError("taxonomy version differs from model")
         categories = self.taxonomy["categories"]
@@ -58,6 +62,8 @@ class TaxonomyModel:
             raise ValueError("taxonomy labels differ from model")
 
     def classify(self, text: str) -> dict:
+        if self.input_guard:
+            self.input_guard.check(text)
         sparse = hstack([
             self.bundle["word"].transform([text]),
             self.bundle["char"].transform([text]),

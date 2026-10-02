@@ -17,6 +17,7 @@ from app.models import PipelineEntry, TaxonomyClassification, TaxonomyRun, Teleg
 from app.taxonomy.inference import TaxonomyModel
 from app.taxonomy.jobs import MODEL_KEYS, text_sha256
 from app.taxonomy.profiles import profile_of
+from app.taxonomy.input_contract import InputNeedsReview
 
 
 logger = logging.getLogger(__name__)
@@ -102,7 +103,7 @@ async def finish_job(factory, job_id: int, result: dict | None, elapsed_ms: int,
                         entry.stage = "sorted" if other_complete else "received"
                         entry.status = "taxonomy_sorted" if other_complete else "received"
             elif error is not None:
-                job.status = "failed"
+                job.status = "needs_review" if result and result.get("status") == "needs_review" else "failed"
                 job.result = None
                 job.error = error
                 if entry is not None:
@@ -115,7 +116,7 @@ async def finish_job(factory, job_id: int, result: dict | None, elapsed_ms: int,
                         ).limit(1)
                     )).scalar_one_or_none()
                     entry.stage = "sorted" if other_complete else "received"
-                    entry.status = "taxonomy_failed"
+                    entry.status = "taxonomy_review" if job.status == "needs_review" else "taxonomy_failed"
             else:
                 job.status = result.get("status", "complete") if result else "complete"
                 job.result = result
@@ -141,6 +142,22 @@ async def finish_job(factory, job_id: int, result: dict | None, elapsed_ms: int,
                     await evaluate_completed_job(session, entry, post, job)
                 else:
                     await preserve_mark_stage(session, entry)
+
+
+async def model_call(function, *args):
+    # Загрузка вынесена из event loop. В этот момент healthcheck видит живую
+    # работу, но зависшая загрузка не продлевает heartbeat бесконечно.
+    async def pulse():
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            Path("/tmp/taxonomy-worker-heartbeat").touch()
+            await asyncio.sleep(5)
+    task = asyncio.create_task(pulse())
+    try:
+        return await asyncio.to_thread(function, *args)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 async def run() -> None:
@@ -213,17 +230,19 @@ async def run() -> None:
                     directory = settings.humor_model_dir if profile == "humor_ocr" else settings.taxonomy_model_dir
                     if model_key == "minilm":
                         from app.taxonomy.minilm import MiniLmTaxonomyModel
-                        model = await asyncio.to_thread(MiniLmTaxonomyModel, directory)
+                        model = await model_call(MiniLmTaxonomyModel, directory)
                     else:
-                        model = await asyncio.to_thread(TaxonomyModel, directory)
+                        model = await model_call(TaxonomyModel, directory)
                     loaded_profile = profile
                     async with factory() as session:
                         await session.execute(update(TaxonomyClassification).where(TaxonomyClassification.id == job_id).values(status="running"))
                         await session.execute(update(TaxonomyRun).where(TaxonomyRun.id == row[0].current_run_id).values(status="running"))
                         await session.commit()
                 started = time.perf_counter()
-                result = await asyncio.to_thread(model.classify, model_input)
+                result = await model_call(model.classify, model_input)
                 await finish_job(factory, job_id, result, max(1, round((time.perf_counter() - started) * 1000)), model_version=model.model_version)
+            except InputNeedsReview as exc:
+                await finish_job(factory, job_id, {"status": "needs_review"}, 0, str(exc))
             except Exception as exc:
                 logger.error("taxonomy classification failed: job_id=%s type=%s", job_id, type(exc).__name__)
                 await finish_job(factory, job_id, None, max(1, round((time.perf_counter() - started) * 1000)),
