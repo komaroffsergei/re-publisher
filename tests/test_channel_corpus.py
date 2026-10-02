@@ -91,6 +91,36 @@ def test_insufficient_quota_prevents_training_snapshot(tmp_path):
     finally: db.close()
 
 
+def test_reviewed_paraphrases_keep_holdout_boundary_after_restart(tmp_path):
+    db = seed(tmp_path, ['One report about a deleted project', 'Completely rewritten retelling of that incident'])
+    try:
+        shas = [row['sha'] for row in db.execute('SELECT sha FROM texts ORDER BY sha')]
+        db.execute('INSERT INTO reserved_texts VALUES (?)', (shas[0],))
+        groups = tmp_path / 'manual-groups.jsonl'
+        groups.write_text(json.dumps({'texts': shas, 'reason': 'Codex read both retellings'}) + '\n')
+        group_and_split(db, manual_group_paths=[groups])
+        assert len({r['group_id'] for r in db.execute('SELECT group_id FROM texts')}) == 1
+        assert {r['split'] for r in db.execute('SELECT split FROM texts')} == {'test'}
+        db.close()
+        db = connect(tmp_path / 'private')
+        group_and_split(db)
+        assert {r['split'] for r in db.execute('SELECT split FROM texts')} == {'test'}
+        assert db.execute('SELECT COUNT(*) FROM annotations').fetchone()[0] == 0
+    finally: db.close()
+
+
+def test_unknown_manual_repeat_member_does_not_create_a_link(tmp_path):
+    db = seed(tmp_path, ['Only one known text'])
+    try:
+        sha = db.execute('SELECT sha FROM texts').fetchone()[0]
+        groups = tmp_path / 'bad-group.jsonl'
+        groups.write_text(json.dumps({'texts': [sha, 'f' * 64], 'reason': 'wrong reference'}) + '\n')
+        with pytest.raises(ValueError, match='Invalid manually reviewed repeat group'):
+            group_and_split(db, manual_group_paths=[groups])
+        assert db.execute('SELECT COUNT(*) FROM manual_repeat_links').fetchone()[0] == 0
+    finally: db.close()
+
+
 def test_unknown_and_missing_labels_are_not_negative_training_targets():
     indices, target = known([{'labels': {'j': 'yes'}}, {'labels': {'j': 'unclear'}}, {'labels': {}}, {'labels': {'j': 'no'}}], 'j')
     assert indices.tolist() == [0, 3]

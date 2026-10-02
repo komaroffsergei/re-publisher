@@ -62,6 +62,11 @@ def connect(directory: Path):
       peer INTEGER NOT NULL, message INTEGER NOT NULL, PRIMARY KEY(peer,message)
     );
     CREATE TABLE IF NOT EXISTS reserved_texts (sha TEXT PRIMARY KEY);
+    CREATE TABLE IF NOT EXISTS manual_repeat_links (
+      left_sha TEXT NOT NULL, right_sha TEXT NOT NULL,
+      reason TEXT NOT NULL, batch TEXT NOT NULL,
+      PRIMARY KEY(left_sha,right_sha)
+    );
     ''')
     return db
 

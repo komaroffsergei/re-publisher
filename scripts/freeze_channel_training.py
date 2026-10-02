@@ -49,7 +49,7 @@ def reserve_holdout(db, paths):
                    'JOIN reserved_sources r ON r.peer=s.peer AND r.message=s.message')
 
 
-def group_and_split(db, reserved_paths=()):
+def group_and_split(db, reserved_paths=(), manual_group_paths=()):
     reserve_holdout(db, reserved_paths)
     rows = db.execute('SELECT sha,text FROM texts t WHERE length>0 AND EXISTS(SELECT 1 FROM sources s WHERE s.sha=t.sha) ORDER BY sha').fetchall()
     parent = {r['sha']: r['sha'] for r in rows}
@@ -60,6 +60,28 @@ def group_and_split(db, reserved_paths=()):
     def join(a, b):
         a, b = root(a), root(b)
         parent[max(a, b)] = min(a, b)
+    # Codex отдельно прочитал эти пересказы. Связь защищает разделение,
+    # но не переносит метки между текстами. Сохраняем её для перезапусков.
+    with db:
+        for path in manual_group_paths:
+            for line in path.read_text(encoding='utf-8').splitlines():
+                if not line.strip():
+                    continue
+                item = json.loads(line)
+                members = item.get('texts')
+                if (not isinstance(members, list) or len(set(members)) < 2
+                    or not isinstance(item.get('reason'), str) or not item['reason'].strip()
+                    or any(not isinstance(sha, str) or not re.fullmatch(r'[0-9a-f]{64}', sha)
+                           or sha not in parent for sha in members)):
+                    raise ValueError('Invalid manually reviewed repeat group')
+                first, *rest = sorted(set(members))
+                for other in rest:
+                    db.execute('INSERT INTO manual_repeat_links VALUES (?,?,?,?) '
+                               'ON CONFLICT(left_sha,right_sha) DO UPDATE SET reason=excluded.reason,batch=excluded.batch',
+                               (first, other, item['reason'], path.name))
+    for link in db.execute('SELECT left_sha,right_sha FROM manual_repeat_links'):
+        if link['left_sha'] in parent and link['right_sha'] in parent:
+            join(link['left_sha'], link['right_sha'])
     buckets, sets = defaultdict(list), {}
     # Варианты подписи одной исходной записи никогда не разделяем.
     # Ключ источника в sources актуален; старые версии без источника исключены.
@@ -191,10 +213,11 @@ if __name__ == '__main__':
     parser.add_argument('--legacy-worklist', type=Path)
     parser.add_argument('--legacy-audit', type=Path)
     parser.add_argument('--reserved-holdout', type=Path, action='append', default=[])
+    parser.add_argument('--manual-groups', type=Path, action='append', default=[])
     args = parser.parse_args()
     db = connect(args.directory)
     try:
-        result = group_and_split(db, args.reserved_holdout) if args.group else freeze(db, args.output, args.legacy_labels, args.legacy_worklist, args.legacy_audit)
+        result = group_and_split(db, args.reserved_holdout, args.manual_groups) if args.group else freeze(db, args.output, args.legacy_labels, args.legacy_worklist, args.legacy_audit)
         print(json.dumps(result, ensure_ascii=False))
     finally:
         db.close()
