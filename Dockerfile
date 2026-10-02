@@ -14,6 +14,7 @@ RUN apt-get update \
 COPY pyproject.toml README.md ./
 COPY app ./app
 COPY config ./config
+COPY scripts/install_channel_routes.py ./scripts/install_channel_routes.py
 COPY alembic.ini ./alembic.ini
 COPY alembic ./alembic
 

@@ -50,6 +50,10 @@ jobs:
           tags: ghcr.io/komaroffsergei/re-publisher:taxonomy-${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Check route installer in the production image
+        env:
+          BASE_IMAGE: ghcr.io/komaroffsergei/re-publisher@${{ steps.build.outputs.digest }}
+        run: docker run --rm "$BASE_IMAGE" python -m scripts.install_channel_routes --help
       - uses: docker/build-push-action@v6
         id: minilm
         with:
