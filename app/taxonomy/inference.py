@@ -13,7 +13,7 @@ from scipy.sparse import hstack
 from app.taxonomy.labels import FEATURE_NAMES
 from app.taxonomy.artifact import artifact_version, configured_artifact
 
-def format_result(taxonomy: dict, scores: dict[str, float], complexity: float) -> dict:
+def format_result(taxonomy: dict, scores: dict[str, float], complexity: float | None) -> dict:
     categories = sorted(taxonomy["categories"], key=lambda category: scores[category["id"]], reverse=True)[:3]
     top = [
         {
@@ -34,8 +34,9 @@ def format_result(taxonomy: dict, scores: dict[str, float], complexity: float) -
             {"id": name, "name": taxonomy.get('feature_names', {}).get(name, FEATURE_NAMES.get(name, name)), "score": round(scores[name], 4)}
             for name in taxonomy["binary_features"]
         ],
-        "technical_complexity": int(np.rint(np.clip(complexity, 0, 5))),
-        "review_status": "needs_review" if not top or top[0]["score"] < 0.55 else "scored",
+        "profile": taxonomy.get("profile", "taxonomy"),
+        "technical_complexity": int(np.rint(np.clip(complexity, 0, 5))) if complexity is not None else None,
+        "review_status": "scored" if taxonomy.get("profile") == "humor_ocr" else "needs_review" if not top or top[0]["score"] < 0.55 else "scored",
         "score_kind": "uncalibrated_model_score",
     }
 
@@ -67,5 +68,5 @@ class TaxonomyModel:
             probability = np.clip(scores[name], 1e-7, 1 - 1e-7)
             logit = np.log(probability / (1 - probability))
             scores[name] = float(1 / (1 + np.exp(-np.clip(parameters['a'] * logit + parameters['b'], -50, 50))))
-        complexity = float(self.bundle["complexity"].predict(sparse)[0])
+        complexity = float(self.bundle["complexity"].predict(sparse)[0]) if "complexity" in self.bundle else None
         return format_result(self.taxonomy, scores, complexity)

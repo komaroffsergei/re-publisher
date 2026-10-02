@@ -20,6 +20,7 @@
                 {% if source_media %}<div class="source-media-grid">{% for media in source_media %}<figure>{% if media.url and media.kind=="image" %}<a href="{{ media.url }}" target="_blank" rel="noopener"><img src="{{ media.url }}"
      alt="Медиа сообщения {{ media.message_id }}"
      loading="lazy"></a>{% elif media.url and media.kind=="video" %}<video controls preload="metadata" src="{{ media.url }}"></video>{% elif media.url %}<a class="button secondary" href="{{ media.url }}">Скачать {{ media.filename }}</a>{% else %}<p class="notice">Медиа не скачано · {{ media.status }}</p>{% endif %}<figcaption>Сообщение {{ media.message_id }}{% if media.size_bytes %} · {{ (media.size_bytes/1048576)|round(1) }} МБ{% endif %}</figcaption></figure>{% endfor %}</div>{% endif %}
+                <details class="ocr-disclosure" data-ocr-panel="{{ entry.id }}"><summary>Текст на медиа · OCR</summary><p class="muted">Оригинал не меняется. Проценты здесь относятся к чтению букв.</p><div data-ocr-output></div><button type="button" class="secondary" data-ocr-retry {% if not request.app.state.settings.ocr_enabled %}disabled{% endif %}>Распознать / повторить OCR</button></details>
             </article><article><header class="section-heading"><h2>Сравнение моделей</h2><span class="muted">Результаты сохранены в БД</span></header>{% set compare_entry_id = entry.id %}{% include "_taxonomy_compare.html" %}</article><article><h2>Доставка в MAX</h2><a href="/publication">Назначения и сохранённые публикации →</a><div data-max-deliveries="{{ entry.id }}"></div></article></div>
             <aside class="post-inspector"><article class="pipeline-record"
          data-entry-id="{{ entry.id }}"
@@ -35,6 +36,7 @@
             </aside>
         </div>
         <script src="/static/taxonomy-compare.js?v=automation-1" defer></script>
+        <script src="/static/ocr.js?v=humor-1" defer></script>
         <script src="/static/pipeline.js?v=automation-1" defer></script>
 <script src="/static/max-publication.js?v=max-4" defer></script>
 {% endblock %}

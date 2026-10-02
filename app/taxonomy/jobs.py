@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.taxonomy.profiles import PROFILES, profile_of
 
 from app.models import (
     PipelineEntry,
@@ -37,10 +38,13 @@ def public_job(
     return {
         "run_id": getattr(job, "current_run_id", None),
         "model_key": job.model_key,
+        "profile": profile_of(job),
+        "input_sha256": getattr(job, "input_sha256", None),
+        "ocr_run_id": getattr(job, "ocr_run_id", None),
         "status": status,
         "model_version": job.model_version,
         "result": job.result if status in {"complete", "media_only", "empty"} else None,
-        "error": job.error if status == "failed" else None,
+        "error": job.error if status in {"failed", "needs_review", "ocr"} else None,
         "elapsed_ms": job.elapsed_ms
         if status in {"complete", "media_only", "empty"}
         else None,
@@ -127,10 +131,12 @@ async def sort_textless_post(
 
 
 async def enqueue(
-    session: AsyncSession, entry_id: int, model_key: str
+    session: AsyncSession, entry_id: int, model_key: str, profile: str = "taxonomy"
 ) -> TaxonomyClassification:
     if model_key not in MODEL_KEYS:
         raise HTTPException(404, detail="Модель не найдена")
+    if profile not in PROFILES:
+        raise HTTPException(422, detail="Неизвестный профиль")
     row = (
         await session.execute(
             select(PipelineEntry, TelegramPost, TelegramChat)
@@ -149,7 +155,18 @@ async def enqueue(
         or entry.stage not in {"received", "sorted", "filtered", "marking", "ready"}
     ):
         raise HTTPException(409, detail="Карточка недоступна для сортировки")
-    if not (post.text or "").strip():
+    ocr_run, model_input, settings = None, None, None
+    if profile == "humor_ocr":
+        from app.config import get_settings
+        from app.ocr.jobs import enqueue_ocr, current_input
+        settings = get_settings()
+        if not settings.humor_model_dir:
+            raise HTTPException(409, "Модель профиля юмора ещё не готова")
+        from app.ocr.models import OcrJob
+        existing_ocr = await session.get(OcrJob, entry.id)
+        await enqueue_ocr(session, entry, post, settings, retry=bool(existing_ocr and existing_ocr.status in {"failed", "needs_review"}))
+        model_input, ocr_run = await current_input(session, entry.id, post, settings)
+    if profile == "taxonomy" and not (post.text or "").strip():
         return await mark_without_text(session, entry, post)
 
     job = (
@@ -158,6 +175,7 @@ async def enqueue(
             .where(
                 TaxonomyClassification.pipeline_entry_id == entry_id,
                 TaxonomyClassification.model_key == model_key,
+                TaxonomyClassification.profile == profile,
             )
             .with_for_update()
         )
@@ -165,7 +183,7 @@ async def enqueue(
     fingerprint = text_sha256(post.text)
     if (
         job is not None
-        and job.status in {"queued", "running"}
+        and job.status in {"ocr", "queued", "loading", "running"}
         and job.text_sha256 == fingerprint
     ):
         return job
@@ -174,8 +192,8 @@ async def enqueue(
             select(TaxonomyClassification.id)
             .where(
                 TaxonomyClassification.pipeline_entry_id == entry_id,
-                TaxonomyClassification.model_key != model_key,
-                TaxonomyClassification.status.in_(("queued", "running")),
+                (TaxonomyClassification.model_key != model_key) | (TaxonomyClassification.profile != profile),
+                TaxonomyClassification.status.in_(("ocr", "queued", "loading", "running")),
                 TaxonomyClassification.text_sha256 == fingerprint,
             )
             .limit(1)
@@ -189,25 +207,31 @@ async def enqueue(
             pipeline_entry_id=entry.id,
             source_post_id=post.id,
             model_key=model_key,
+            profile=profile,
             text_sha256=fingerprint,
         )
         session.add(job)
     job.text_sha256 = fingerprint
+    job.input_sha256 = ocr_run.input_sha256 if profile == "humor_ocr" and model_input is not None else fingerprint if profile == "taxonomy" else None
+    job.ocr_run_id = ocr_run.id if profile == "humor_ocr" and model_input is not None else None
     # Worker запишет версию фактически загруженных весов. До этого она неизвестна.
     job.model_version = None
     run = TaxonomyRun(
         pipeline_entry_id=entry.id,
         source_post_id=post.id,
         model_key=model_key,
+        profile=profile,
+        input_sha256=job.input_sha256,
+        ocr_run_id=job.ocr_run_id,
         text_sha256=fingerprint,
         model_version=None,
-        status="queued",
+        status="ocr" if profile == "humor_ocr" and model_input is None else "queued",
         queued_at=now,
     )
     session.add(run)
     await session.flush()
     job.current_run_id = run.id
-    job.status = "queued"
+    job.status = run.status
     job.result = None
     job.error = None
     job.elapsed_ms = None
@@ -253,7 +277,7 @@ async def invalidate_if_edited(
         return False
     now = datetime.now(timezone.utc)
     for job in changed:
-        if job.current_run_id is not None and job.status in {"queued", "running"}:
+        if job.current_run_id is not None and job.status in {"ocr", "queued", "loading", "running"}:
             run = (
                 await session.execute(
                     select(TaxonomyRun)
@@ -304,6 +328,9 @@ def public_run(run: TaxonomyRun, current_text: str | None) -> dict:
     return {
         "id": run.id,
         "model_key": run.model_key,
+        "profile": profile_of(run),
+        "input_sha256": getattr(run, "input_sha256", None),
+        "ocr_run_id": getattr(run, "ocr_run_id", None),
         "model_version": run.model_version,
         "status": run.status,
         "result": run.result,

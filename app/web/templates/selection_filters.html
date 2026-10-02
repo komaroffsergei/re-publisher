@@ -23,6 +23,7 @@
                                  margin:0;
                                  min-width:0">
                     <div class="selection-fields">
+                        <label>Профиль<select name="profile"><option value="taxonomy">Текст поста</option><option value="humor_ocr">Юмор · подпись + OCR</option></select></label>
                         <label>
                             Название фильтра<input name="name" maxlength="120" required>
                         </label>
@@ -52,7 +53,7 @@
             </form>
             <p id="filters-feedback" role="status">Загружаю словарь и фильтры…</p>
             <div id="filter-preview-result" aria-live="polite"></div>
-            <p class="muted">Новая версия применяется к старым карточкам партиями. Недостающий полный набор оценок досчитывается выбранной моделью. Сохранённые признаки снимаются только вручную.</p>
+            <p class="muted">Обычная таксономия пересчитывает старые карточки партиями. Профиль юмора работает с новыми постами и ручными прогонами: сохранение фильтра не запускает OCR всего старого буфера. Сохранённые лейблы снимаются вручную.</p>
         </article>
     </div>
     <script src="/static/selection-admin.js?v=preview-1" defer></script>

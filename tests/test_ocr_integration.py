@@ -1,0 +1,113 @@
+"""Настоящая БД: история OCR, два профиля и отсутствие массового backfill."""
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+import json
+from pathlib import Path
+import pytest
+from sqlalchemy import select, func
+import test_selection_integration as shared
+from app.config import get_settings
+from app.models import PipelineEntry, TelegramPost, TaxonomyClassification, FilterApplication
+from app.ocr.models import OcrJob, OcrRun
+from app.ocr.jobs import enqueue_ocr, current_input, invalidate_ocr
+from app.ocr.worker import claim, process
+from app.taxonomy.jobs import enqueue
+
+db = shared.db
+client = shared.client
+pytestmark = shared.pytestmark
+
+
+def configure(tmp_path):
+    settings = get_settings()
+    settings.ocr_enabled = True
+    settings.humor_model_dir = str(tmp_path / "humor")
+    settings.ocr_model_dir = str(tmp_path / "ocr-models")
+    settings.media_dir = str(tmp_path / "media")
+    settings.ocr_preview_dir = str(tmp_path / "previews")
+    settings.cache_dir = str(tmp_path / "cache")
+    Path(settings.ocr_model_dir).mkdir()
+    Path(settings.ocr_model_dir, "ocr-manifest.json").write_text(json.dumps({"models": {}}))
+    Path(settings.media_dir).mkdir()
+    return settings
+
+
+async def media_post(db, entry_id, settings):
+    async with db() as session:
+        entry = await session.get(PipelineEntry, entry_id)
+        post = await session.get(TelegramPost, entry.source_post_id)
+        path = Path(settings.media_dir) / "fixture.png"; path.write_bytes(b"different input")
+        post.text, post.media_path, post.media_type = None, str(path), "MessageMediaPhoto"
+        post.media_download_status, post.updated_at = "downloaded", datetime.now(timezone.utc) - timedelta(seconds=10)
+        await session.commit()
+
+
+class Reader:
+    version = "fixture-no-model-inference"
+    async def read(self, item):
+        return {"status": "complete", "blocks": [{"text": "Работаю над багами: они размножаются", "score": .99, "box": [[0,0],[10,0],[10,10],[0,10]]}],
+            "text": "Работаю над багами: они размножаются", "media_sha256": item["sha256"], "engine_version": self.version, "elapsed_ms": 10}
+
+
+async def test_ocr_empty_caption_queues_only_requested_profile_and_retains_taxonomy(db, client, tmp_path):
+    entry_id = await shared.seed(db)
+    settings = configure(tmp_path)
+    await media_post(db, entry_id, settings)
+    async with db() as session:
+        job = await enqueue(session, entry_id, "tfidf", "humor_ocr")
+        assert job.status == "ocr" and job.profile == "humor_ocr"
+        await session.commit()
+    await process(db, settings, Reader(), *(await claim(db)))
+    async with db() as session:
+        entry = await session.get(PipelineEntry, entry_id)
+        post = await session.get(TelegramPost, entry.source_post_id)
+        value, run = await current_input(session, entry_id, post, settings)
+        assert "размножаются" in value and post.text is None
+        jobs = list((await session.execute(select(TaxonomyClassification).where(TaxonomyClassification.pipeline_entry_id == entry_id))).scalars())
+        assert len(jobs) == 3
+        humor = next(j for j in jobs if j.profile == "humor_ocr")
+        assert humor.status == "queued" and humor.ocr_run_id == run.id
+        assert all(j.status == "complete" for j in jobs if j.profile == "taxonomy")
+    data = (await client.get(f"/api/pipeline/{entry_id}/ocr")).json()
+    assert data["status"] == "complete" and data["runs"][0]["current"]
+    assert (await client.post(f"/api/pipeline/{entry_id}/ocr", json={}, auth=None)).status_code == 401
+    assert (await client.post(f"/api/pipeline/{entry_id}/ocr", json={}, headers={"Origin":"https://outside.invalid"})).status_code == 403
+
+
+async def test_changed_media_invalidates_result_but_keeps_history(db, client, tmp_path):
+    entry_id = await shared.seed(db)
+    settings = configure(tmp_path)
+    await media_post(db, entry_id, settings)
+    async with db() as session:
+        entry = await session.get(PipelineEntry, entry_id)
+        post = await session.get(TelegramPost, entry.source_post_id)
+        await enqueue_ocr(session, entry, post, settings)
+        await session.commit()
+    await process(db, settings, Reader(), *(await claim(db)))
+    async with db() as session:
+        entry = await session.get(PipelineEntry, entry_id)
+        post = await session.get(TelegramPost, entry.source_post_id)
+        Path(post.media_path).write_bytes(b"changed media")
+        await invalidate_ocr(session, post, settings)
+        await session.commit()
+    async with db() as session:
+        entry = await session.get(PipelineEntry, entry_id)
+        post = await session.get(TelegramPost, entry.source_post_id)
+        assert (await current_input(session, entry_id, post, settings))[0] is None
+        assert (await session.execute(select(func.count(OcrRun.id)))).scalar_one() == 1
+        assert (await session.get(OcrJob, entry_id)).status == "stale"
+
+
+async def test_humor_filter_does_not_enqueue_ocr_for_old_buffer(db, client):
+    await shared.seed(db)
+    mark = (await client.post("/api/pipeline/marks", json={"name":"Смешное"})).json()["id"]
+    draft = {"name":"Humor", "profile":"humor_ocr", "model_key":"tfidf", "mark_id":mark,
+        "expression":{"op":"and", "children":[{"op":"condition","label_id":key,"compare":"gte","threshold":92}
+                      for key in ("is_joke","input_has_context")]}}
+    preview = await client.post("/api/pipeline/filters/preview", json=draft)
+    assert preview.status_code == 200
+    result = await client.post("/api/pipeline/filters/apply", json={**draft,"preview_digest":preview.json()["preview_digest"]})
+    assert result.status_code == 200 and result.json()["application_id"] is None
+    async with db() as session:
+        assert (await session.execute(select(func.count(OcrJob.entry_id)))).scalar_one() == 0
+        assert (await session.execute(select(func.count(FilterApplication.id)))).scalar_one() == 0

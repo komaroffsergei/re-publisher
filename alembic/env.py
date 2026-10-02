@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from app.config import get_settings
 from app.db import Base
 from app import models  # noqa: F401
+from app.ocr import models as ocr_models  # noqa: F401
 
 config = context.config
 

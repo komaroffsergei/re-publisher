@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     auto_accept_codex_labels: bool = Field(default=False, validation_alias="AUTO_ACCEPT_CODEX_LABELS")
     taxonomy_enabled: bool = Field(default=False, validation_alias="TAXONOMY_ENABLED")
     taxonomy_model_dir: str = Field(default="./models/max-taxonomy-20260929", validation_alias="TAXONOMY_MODEL_DIR")
+    humor_model_dir: str | None = Field(default=None, validation_alias="HUMOR_MODEL_DIR")
+    ocr_enabled: bool = Field(default=False, validation_alias="OCR_ENABLED")
+    ocr_model_dir: str = Field(default="./models/ocr", validation_alias="OCR_MODEL_DIR")
+    ocr_preview_dir: str = Field(default="./cache/ocr-previews", validation_alias="OCR_PREVIEW_DIR")
+    ocr_caption_max_chars: int = Field(default=500, ge=0, le=2000, validation_alias="OCR_CAPTION_MAX_CHARS")
+    ocr_timeout_seconds: int = Field(default=30, ge=1, le=120, validation_alias="OCR_TIMEOUT_SECONDS")
 
     summary_backend: str = Field(default="extractive_fallback", validation_alias="SUMMARY_BACKEND")
     summary_model_name: str = Field(default="cointegrated/rut5-base-absum", validation_alias="SUMMARY_MODEL_NAME")

@@ -14,7 +14,11 @@
   const names = { tfidf: "TF-IDF", minilm: "MiniLM", media: "Медиа" };
   const statuses = {
     queued: "В очереди",
-    running: "В работе",
+    ocr: "OCR",
+    loading: "Загрузка модели",
+    running: "Классификация",
+    needs_review: "Нужен ручной разбор",
+    empty: "Пустой",
     complete: "Готово",
     media_only: "Только медиа",
     failed: "Ошибка",
@@ -28,6 +32,8 @@
     const busy = state.active || record.pendingAction;
     record.classList.toggle("is-busy", Boolean(busy));
     record.setAttribute("aria-busy", String(Boolean(busy)));
+    const profile = record.querySelector("[data-profile]");
+    if (profile) profile.disabled = Boolean(busy);
     record.querySelectorAll("[data-taxonomy]").forEach((button) => {
       button.disabled =
         busy || state.deleted || button.dataset.modelEnabled !== "true";
@@ -37,14 +43,22 @@
     if (panel.dataset.signature !== signature) {
       panel.dataset.signature = signature;
       panel.replaceChildren();
-      for (const key of Object.keys(names)) {
-        const job = state.taxonomies[key];
+      for (const job of Object.values(state.taxonomies)) {
+        const key = job.model_key;
         if (!job) continue;
         const line = document.createElement("p");
         line.className = `model-state state-${job.status}`;
         const uncertainty =
           job.result?.review_status === "needs_review" ? " · Не уверен" : "";
-        line.textContent = `${names[key]} · ${statuses[job.status] || job.status}${uncertainty}${job.elapsed_ms == null ? "" : ` · ${job.elapsed_ms} мс`}`;
+        line.textContent = `${names[key] || key}${job.profile === "humor_ocr" ? " · OCR-профиль" : ""} · ${statuses[job.status] || job.status}${uncertainty}${job.elapsed_ms == null ? "" : ` · ${job.elapsed_ms} мс`}`;
+        if (job.profile === "humor_ocr" && job.result?.features) {
+          for (const feature of job.result.features) {
+            const score = document.createElement("small");
+            score.textContent = `${feature.name}: ${(feature.score * 100).toFixed(1)}%`;
+            score.className = feature.score >= .8 ? "score-high" : feature.score >= .5 ? "score-mid" : "score-low";
+            line.append(document.createElement("br"), score);
+          }
+        }
         if (!detail && job.result?.top_3?.length) {
           const category = job.result.top_3[0];
           const score = document.createElement("small");
@@ -153,8 +167,10 @@
         const x = window.scrollX, y = window.scrollY, boardX = root.scrollLeft;
         const columns = new Map(Array.from(root.querySelectorAll("[data-column]")).map(col => [col.dataset.column, col.scrollTop]));
         const expanded = new Set(Array.from(root.querySelectorAll("details[open]")).map(node => `${node.closest(".pipeline-record")?.dataset.entryId}:${node.className}`));
+        const profiles = new Map(current.map(record => [record.dataset.entryId, record.querySelector("[data-profile]")?.value]));
         root.replaceChildren(fragment.content);
         initialize();
+        records().forEach(record => {const select = record.querySelector("[data-profile]"); if (select && profiles.has(record.dataset.entryId)) select.value = profiles.get(record.dataset.entryId);});
         root.querySelectorAll("details").forEach(node => {if (expanded.has(`${node.closest(".pipeline-record")?.dataset.entryId}:${node.className}`)) node.open = true;});
         root.querySelectorAll("[data-column]").forEach(col => col.scrollTop = columns.get(col.dataset.column) || 0);
         root.scrollLeft = boardX; window.scrollTo(x,y);
@@ -219,12 +235,12 @@
       } else {
         const job = await request(
           `/api/pipeline/${record.dataset.entryId}/taxonomy/${button.dataset.taxonomy}`,
-          {},
+          {profile: record.querySelector("[data-profile]")?.value || "taxonomy"},
         );
         render(record, {
           ...state,
-          active: ["queued", "running"].includes(job.status),
-          taxonomies: { ...state.taxonomies, [button.dataset.taxonomy]: job },
+          active: ["ocr", "queued", "loading", "running"].includes(job.status),
+          taxonomies: { ...state.taxonomies, [job.profile === "humor_ocr" ? `humor_ocr:${job.model_key}` : job.model_key]: job },
         });
       }
     } catch (error) {

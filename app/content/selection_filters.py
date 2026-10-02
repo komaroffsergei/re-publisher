@@ -12,6 +12,7 @@ from app.models import (FilterApplication, FilterEvaluation, FilterMark, FilterM
                         PostFilterMark, SelectionFilter, SelectionFilterVersion, TaxonomyClassification,
                         TaxonomyRun, TelegramChat, TelegramPost)
 from app.taxonomy.jobs import text_sha256
+from app.taxonomy.profiles import profile_of
 from app.content.selection_rules import evaluate, matching_conditions, taxonomy_catalog
 
 logger = logging.getLogger(__name__)
@@ -34,16 +35,17 @@ async def preserve_mark_stage(session, entry: PipelineEntry):
 def assessment(version, job, post):
     fingerprint = text_sha256(post.text)
     run_id = job.current_run_id if job else None
-    input_key = f"{fingerprint}:{run_id or 0}:{job.status if job else 'missing'}"
+    profile = profile_of(version)
+    input_key = f"{profile}:{getattr(job, 'input_sha256', None) or fingerprint}:{run_id or 0}:{job.status if job else 'missing'}"
     scores = {}
     reason = None
     if post.is_deleted:
         reason = "Пост удалён"
-    elif not (post.text or "").strip():
+    elif profile == "taxonomy" and not (post.text or "").strip():
         reason = "Нет содержательного текста"
-    elif not job or job.status != "complete" or job.text_sha256 != fingerprint:
+    elif not job or profile_of(job) != profile or job.status != "complete" or job.text_sha256 != fingerprint:
         reason = "Нет актуальной оценки выбранной модели"
-    elif (job.result or {}).get("taxonomy_version") != taxonomy_catalog()["version"]:
+    elif (job.result or {}).get("taxonomy_version") != taxonomy_catalog(profile)["version"]:
         reason = "Нужно обновить полный набор оценок"
     else:
         scores = (job.result or {}).get("scores") or {}
@@ -95,7 +97,8 @@ async def evaluate_post(session, entry, post, version, context: str, job=None):
     if job is None:
         job = (await session.execute(select(TaxonomyClassification).where(
             TaxonomyClassification.pipeline_entry_id == entry.id,
-            TaxonomyClassification.model_key == version.model_key))).scalar_one_or_none()
+            TaxonomyClassification.model_key == version.model_key,
+            TaxonomyClassification.profile == profile_of(version)))).scalar_one_or_none()
     values = assessment(version, job, post)
     evaluation = (await session.execute(select(FilterEvaluation).where(
         FilterEvaluation.entry_id == entry.id, FilterEvaluation.version_id == version.id,
@@ -113,7 +116,8 @@ async def evaluate_completed_job(session, entry, post, job):
     versions = (await session.execute(select(SelectionFilterVersion).join(
         SelectionFilter, SelectionFilter.active_version_id == SelectionFilterVersion.id).where(
         SelectionFilter.enabled.is_(True), SelectionFilter.archived.is_(False),
-        SelectionFilterVersion.model_key == job.model_key))).scalars()
+        SelectionFilterVersion.model_key == job.model_key,
+        SelectionFilterVersion.profile == profile_of(job)))).scalars()
     for version in versions:
         await evaluate_post(session, entry, post, version, f"run:{job.current_run_id}", job)
     await preserve_mark_stage(session, entry)
@@ -152,7 +156,8 @@ async def preview(session, version):
             break
         ids = [entry.id for entry, _post in rows]
         jobs = {job.pipeline_entry_id: job for job in (await session.execute(select(TaxonomyClassification).where(
-            TaxonomyClassification.pipeline_entry_id.in_(ids), TaxonomyClassification.model_key == version.model_key))).scalars()}
+            TaxonomyClassification.pipeline_entry_id.in_(ids), TaxonomyClassification.model_key == version.model_key,
+            TaxonomyClassification.profile == profile_of(version)))).scalars()}
         marked = set((await session.execute(select(PostFilterMark.entry_id).where(
             PostFilterMark.entry_id.in_(ids), PostFilterMark.mark_id == version.mark_id,
             PostFilterMark.active.is_(True)))).scalars())
@@ -162,7 +167,7 @@ async def preview(session, version):
             counts[values["outcome"]] += 1
             if values["outcome"] == "matched" and entry.id not in marked:
                 counts["new_marks"] += 1
-            if needs_backfill(job, post):
+            if needs_backfill(job, post, profile_of(version)):
                 counts["backfill_needed"] += 1
             # В предпросмотре только совпадения с актуальными оценками. Счётчики
             # считаем по всей выборке, а тексты возвращаем ограниченным списком.
@@ -176,17 +181,19 @@ async def preview(session, version):
     return {**counts, "total": sum(counts[key] for key in ("matched", "rejected", "unknown")), "examples": examples}
 
 
-def needs_backfill(job, post):
-    if not (post.text or "").strip() or post.is_deleted:
+def needs_backfill(job, post, profile="taxonomy"):
+    if (profile == "taxonomy" and not (post.text or "").strip()) or post.is_deleted:
         return False
     if job is None:
         return True
     current_text = job.text_sha256 == text_sha256(post.text)
-    if job.status in {"queued", "running"} and current_text:
+    if job.status in {"ocr", "queued", "loading", "running"} and current_text:
         return False  # Завершение уже поставленного запуска проверит включённые фильтры.
     scores = (job.result or {}).get("scores") or {}
-    return (job.status != "complete" or not current_text or not scores
-            or (job.result or {}).get("taxonomy_version") != taxonomy_catalog()["version"])
+    if profile == "humor_ocr" and job.status in {"media_only", "empty", "needs_review"} and current_text:
+        return False
+    return (profile_of(job) != profile or job.status != "complete" or not current_text or not scores
+            or (job.result or {}).get("taxonomy_version") != taxonomy_catalog(profile)["version"])
 
 
 async def application_batch(factory):
@@ -214,11 +221,12 @@ async def application_batch(factory):
             for entry, post in rows:
                 job = (await session.execute(select(TaxonomyClassification).where(
                     TaxonomyClassification.pipeline_entry_id == entry.id,
-                    TaxonomyClassification.model_key == version.model_key))).scalar_one_or_none()
+                    TaxonomyClassification.model_key == version.model_key,
+                    TaxonomyClassification.profile == profile_of(version)))).scalar_one_or_none()
                 values = await evaluate_post(session, entry, post, version, f"apply:{application.id}", job)
-                if needs_backfill(job, post):
+                if needs_backfill(job, post, profile_of(version)):
                     try:
-                        await enqueue(session, entry.id, version.model_key)
+                        await enqueue(session, entry.id, version.model_key, profile_of(version))
                         application.backfilled += 1
                     except HTTPException as exc:
                         if exc.status_code != 409:
@@ -306,12 +314,12 @@ async def load_states(session, entries: dict):
     versions = (await session.execute(select(SelectionFilterVersion).join(SelectionFilter,
         SelectionFilter.active_version_id == SelectionFilterVersion.id).where(
         SelectionFilter.enabled.is_(True), SelectionFilter.archived.is_(False)))).scalars().all()
-    jobs = {(job.pipeline_entry_id, job.model_key): job for job in (await session.execute(
+    jobs = {(job.pipeline_entry_id, job.model_key, profile_of(job)): job for job in (await session.execute(
         select(TaxonomyClassification).where(TaxonomyClassification.pipeline_entry_id.in_(ids)))).scalars()}
     # Текущие совпадения считаются без записи: ручное снятие не отменяется polling.
     for entry_id, (_entry, _state, post) in entries.items():
         for version in versions:
-            values = assessment(version, jobs.get((entry_id, version.model_key)), post)
+            values = assessment(version, jobs.get((entry_id, version.model_key, profile_of(version))), post)
             result[entry_id]["checks"].append({"filter_id": version.filter_id, "name": version.name,
                 "version": version.number, "model_key": version.model_key, "outcome": values["outcome"],
                 "assigned": values["trace"].get("assigned"),

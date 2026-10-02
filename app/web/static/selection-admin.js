@@ -118,7 +118,7 @@
     const feedback = document.getElementById("filters-feedback");
     const preview = document.getElementById("filter-preview-result");
     const apply = document.getElementById("filter-apply");
-    let catalog = [],
+    let catalog = [], catalogs = {},
       filters = [],
       marks = [],
       edited = null,
@@ -309,6 +309,8 @@
         ? `${item.name}${copy ? " — копия" : ""}`
         : "";
       form.elements.model_key.value = item?.model_key || "tfidf";
+      form.elements.profile.value = item?.profile || "taxonomy";
+      catalog = catalogs[form.elements.profile.value]?.labels || [];
       drawMarks(item?.mark_id);
       expression = item
         ? structuredClone(item.expression)
@@ -337,6 +339,7 @@
         name: form.elements.name.value,
         enabled: form.elements.enabled.checked,
         model_key: form.elements.model_key.value,
+        profile: form.elements.profile.value,
         mark_id: Number(assignedMark.value),
         expression,
         filter_id: edited?.id || null,
@@ -349,7 +352,8 @@
         api("/api/pipeline/marks"),
       ]);
       filters = data.filters;
-      catalog = data.catalog.labels;
+      catalogs = data.catalogs || {taxonomy: data.catalog};
+      catalog = catalogs[form.elements.profile.value]?.labels || [];
       if (JSON.stringify(marks) !== JSON.stringify(dictionary.marks)) {
         marks = dictionary.marks;
         drawMarks();
@@ -418,6 +422,11 @@
         list.append(row);
       }
     }
+    form.elements.profile.addEventListener("change", () => {
+      catalog = catalogs[form.elements.profile.value]?.labels || [];
+      expression = {op: "and", children: [condition()]};
+      dirty(); draw();
+    });
     for (const name of ["name", "enabled", "model_key"])
       form.elements[name].addEventListener("input", dirty);
     document.getElementById("filter-new").onclick = () => reset();

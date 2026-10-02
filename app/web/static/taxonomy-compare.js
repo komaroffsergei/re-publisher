@@ -30,6 +30,7 @@
           ? item.kind === "feature"
           : item.kind !== "feature",
       )) {
+        if (!(item.id in run.result.scores)) continue;
         map.set(item.id, {
           name: item.name,
           score: run.result.scores[item.id],
@@ -108,12 +109,12 @@
     );
     caption.append(legend);
     output.append(caption);
-    if ([leftRun, rightRun].some((run) => run && !run.is_current_text)) {
+    if ([leftRun, rightRun].some((run) => run && (!run.is_current_text || run.is_current_input === false))) {
       output.append(
         element(
           "p",
           "taxonomy-message is-warning",
-          "Есть результат по старой версии текста. Сравнение может быть некорректным.",
+          "Есть результат по старой версии текста, медиа или OCR. Он сохранён для истории.",
         ),
       );
     }
@@ -155,6 +156,7 @@
     if (!response.ok) throw new Error("Историю прогонов не удалось загрузить");
     const payload = await response.json();
     root.taxonomyCatalog = payload.catalog.labels;
+    root.taxonomyCatalogs = payload.catalogs || {taxonomy: payload.catalog};
     const oldRuns = append ? root.taxonomyRuns || [] : [];
     root.taxonomyRuns = [...oldRuns, ...payload.runs];
     root.dataset.nextBeforeId = payload.next_before_id || "";
@@ -164,7 +166,9 @@
   }
 
   function render(root) {
-    const runs = root.taxonomyRuns || [];
+    const profile = root.querySelector("[data-compare-profile]").value;
+    const runs = (root.taxonomyRuns || []).filter(run => (run.profile || "taxonomy") === profile);
+    root.taxonomyCatalog = root.taxonomyCatalogs?.[profile]?.labels || [];
     root.querySelector("[data-compare-count]").textContent =
       `${runs.length} сохранённых прогонов${root.dataset.nextBeforeId ? "+" : ""}`;
     const selected = {};
@@ -181,7 +185,7 @@
           run.origin === "legacy_snapshot" ? " · старый снимок" : "";
         select.append(
           new Option(
-            `#${run.id} · ${stamp(run.finished_at)} · ${run.elapsed_ms ?? "?"} мс${run.is_current_text ? "" : " · старый текст"}${suffix}`,
+            `#${run.id} · ${stamp(run.finished_at)} · ${run.elapsed_ms ?? "?"} мс · ${run.model_version || "версия неизвестна"}${run.is_current_text ? "" : " · старый текст"}${suffix}`,
             String(run.id),
           ),
         );
@@ -197,6 +201,7 @@
   }
 
   document.querySelectorAll("[data-taxonomy-compare]").forEach((root) => {
+    root.querySelector("[data-compare-profile]").addEventListener("change", () => render(root));
     const details = root.closest(".taxonomy-compare-disclosure");
     const open = () =>
       load(root).catch((error) => {

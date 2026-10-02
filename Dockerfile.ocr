@@ -1,0 +1,7 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libglib2.0-0 libgl1 \
+    && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,target=/root/.cache/pip pip install --timeout 180 '.[ocr]'
+ENV OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+CMD ["python", "-m", "app.ocr.worker"]

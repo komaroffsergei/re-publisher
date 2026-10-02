@@ -239,6 +239,7 @@ async def download_message_media(
     message_id: int,
     *,
     force: bool = False,
+    replace_existing: bool = False,
 ) -> MediaDownloadResult:
     if getattr(message, "media", None) is None or chat_peer_id is None:
         return MediaDownloadResult(None, "missing")
@@ -251,7 +252,7 @@ async def download_message_media(
     target_dir = Path(settings.media_dir) / str(chat_peer_id) / str(message_id)
     target_dir.mkdir(parents=True, exist_ok=True)
     existing = next((path for path in target_dir.iterdir() if path.is_file() and not path.name.endswith(".part")), None)
-    if existing is not None:
+    if existing is not None and not replace_existing:
         return MediaDownloadResult(str(existing), "downloaded", existing.stat().st_size)
 
     staging_dir = target_dir / f".tmp-{uuid4().hex}"
@@ -271,6 +272,8 @@ async def download_message_media(
             return MediaDownloadResult(None, "skipped_too_large", actual_size, "media exceeds configured limit")
         final_path = target_dir / downloaded_path.name
         downloaded_path.replace(final_path)
+        if existing is not None and existing != final_path and replace_existing:
+            existing.unlink(missing_ok=True)
         return MediaDownloadResult(str(final_path), "downloaded", actual_size)
     except FloodWaitError:
         raise
@@ -350,7 +353,17 @@ async def save_message(
     collect_comments: bool = True,
     update_state: bool = True,
 ) -> tuple[int, bool, str]:
-    media = await download_message_media(settings, message, chat.peer_id, message.id)
+    previous, replaced = None, False
+    if settings.ocr_enabled:
+        previous = (await session.execute(select(TelegramPost).where(
+            TelegramPost.chat_peer_id == chat.peer_id, TelegramPost.message_id == message.id))).scalar_one_or_none()
+        def media_identity(value):
+            media = getattr(value, "media", None)
+            return getattr(getattr(media, "photo", None), "id", None) or getattr(getattr(media, "document", None), "id", None)
+        raw_media = (previous.raw or {}).get("media", {}) if previous else {}
+        old_id = (raw_media.get("photo") or raw_media.get("document") or {}).get("id")
+        replaced = bool(previous and old_id != media_identity(message))
+    media = await download_message_media(settings, message, chat.peer_id, message.id, replace_existing=replaced)
     post_data = message_to_post_dict(
         client,
         chat.entity,
@@ -364,7 +377,24 @@ async def save_message(
     await ensure_pipeline_entry_for_post(session, post_id)
     from app.taxonomy.jobs import invalidate_if_edited, sort_textless_post
     await invalidate_if_edited(session, post_id, post_data.get("text"))
-    if not (post_data.get("text") or "").strip():
+    if settings.ocr_enabled:
+        from app.ocr.media import download_preview
+        from app.ocr.jobs import invalidate_ocr
+        post = await session.get(TelegramPost, post_id, populate_existing=True)
+        document = getattr(message, "document", None)
+        if (getattr(document, "mime_type", "") or "").startswith("video/") and len((post.text or "").strip()) <= settings.ocr_caption_max_chars:
+            try:
+                preview, status = await download_preview(message, settings, chat.peer_id, message.id)
+                post.ocr_preview_path, post.ocr_preview_status = preview, status
+            except FloodWaitError:
+                raise
+            except Exception:
+                post.ocr_preview_path, post.ocr_preview_status = None, "failed"
+        elif replaced:
+            post.ocr_preview_path, post.ocr_preview_status = None, "missing"
+        await session.flush()
+        await invalidate_ocr(session, post, settings)
+    if not (post_data.get("text") or "").strip() and not settings.ocr_enabled:
         await sort_textless_post(session, post_id)
     if update_state:
         await update_sync_state(session, chat.peer_id, message.id)

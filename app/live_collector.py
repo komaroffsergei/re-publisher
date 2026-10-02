@@ -142,6 +142,7 @@ async def run_live(settings):
                 and existing.text == (getattr(message, "message", None) or None)
                 and existing.edit_date == getattr(message, "edit_date", None)
                 and existing.media_download_status not in {"failed", "pending"}
+                and (not settings.ocr_enabled or existing.ocr_preview_status != "failed")
             ):
                 return
         for attempt in range(4):

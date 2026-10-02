@@ -17,6 +17,7 @@ from app.models import (
     TaxonomyClassification,
 )
 from app.taxonomy.jobs import enqueue, text_sha256, mark_without_text
+from app.taxonomy.profiles import profile_of, job_key
 from app.content.selection_filters import (
     application_loop,
     assessment,
@@ -58,7 +59,7 @@ async def advance(session, entry, post, chat, versions, settings):
         entry.ready_at = None
         return
     jobs = {
-        j.model_key: j
+        job_key(j.model_key, profile_of(j)): j
         for j in (
             await session.execute(
                 select(TaxonomyClassification).where(
@@ -67,7 +68,7 @@ async def advance(session, entry, post, chat, versions, settings):
             )
         ).scalars()
     }
-    if any(j.status in {"queued", "running"} for j in jobs.values()):
+    if any(j.status in {"ocr", "queued", "loading", "running"} for j in jobs.values()):
         entry.auto_retry_at = now + timedelta(seconds=2)
         return
     # Уже вручную маркированный пост не теряет одобрение из-за пустого словаря.
@@ -75,7 +76,7 @@ async def advance(session, entry, post, chat, versions, settings):
         post.text
     )
     required = (
-        sorted({v.model_key for v in versions}, key=lambda key: key != "tfidf")
+        sorted({(v.model_key, profile_of(v)) for v in versions}, key=lambda key: key[0] != "tfidf")
         if not manual
         else []
     )
@@ -83,13 +84,16 @@ async def advance(session, entry, post, chat, versions, settings):
         entry.auto_retry_at = now + timedelta(seconds=30)
         entry.last_error = "Нет активных фильтров"
         return
-    if not (post.text or "").strip() and not manual:
+    if not (post.text or "").strip() and not manual and not any(profile == "humor_ocr" for _key, profile in required):
         await mark_without_text(session, entry, post)
         entry.auto_state = "done"
         return
-    for key in required:
-        job = jobs.get(key)
-        if needs_backfill(job, post):
+    for key, profile in required:
+        job = jobs.get(job_key(key, profile))
+        if job and job.status == "needs_review":
+            failure(entry, "ocr", job.error or "OCR требует ручного разбора")
+            return
+        if needs_backfill(job, post, profile):
             if (
                 job
                 and job.status == "failed"
@@ -106,11 +110,11 @@ async def advance(session, entry, post, chat, versions, settings):
                     )
                     entry.auto_attempts += 1
                 return
-            await enqueue(session, entry.id, key)
+            await enqueue(session, entry.id, key, profile)
             entry.auto_retry_at = now + timedelta(seconds=2)
             return
     matched = any(
-        assessment(v, jobs.get(v.model_key), post)["outcome"] == "matched"
+        assessment(v, jobs.get(job_key(v.model_key, profile_of(v))), post)["outcome"] == "matched"
         for v in versions
     )
     if not manual and (not matched or not await has_marks(session, entry.id)):

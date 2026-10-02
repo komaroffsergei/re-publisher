@@ -31,7 +31,7 @@ def bundle(tmp_path, monkeypatch):
     (directory / 'model-manifest.json').write_text(json.dumps({'models': models}))
     (directory / 'taxonomy.json').write_text(json.dumps({'version': TOPICS['version']}))
     catalog = {'version': TOPICS['version'], 'labels': [{'id': f, 'name': f} for f in FEATURES]}
-    monkeypatch.setattr(selection_rules, 'taxonomy_catalog', lambda: catalog)
+    monkeypatch.setattr(selection_rules, 'taxonomy_catalog', lambda profile='taxonomy': catalog)
     monkeypatch.setattr('install_channel_routes.taxonomy_catalog', lambda: catalog)
     report = {'all_routes_ready': True, 'routes': {topic['id']: {
         'enabled': True, 'model_key': 'tfidf', 'model_version': 'QA-tfidf',

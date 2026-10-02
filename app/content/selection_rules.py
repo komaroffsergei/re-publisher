@@ -8,8 +8,13 @@ from functools import lru_cache
 from app.taxonomy.labels import FEATURE_NAMES
 
 
-@lru_cache(maxsize=1)
-def taxonomy_catalog() -> dict:
+@lru_cache(maxsize=2)
+def taxonomy_catalog(profile="taxonomy") -> dict:
+    if profile == "humor_ocr":
+        from app.taxonomy.profiles import HUMOR_LABELS
+        return {"version": "humor_ocr_v1", "labels": HUMOR_LABELS}
+    if profile != "taxonomy":
+        raise ValueError("Неизвестный профиль")
     taxonomy = json.loads((Path(__file__).resolve().parents[2] / "config/max_taxonomy.json").read_text(encoding="utf-8"))
     labels = [{"id": category["id"], "name": category["name"], "parent": None}
               for category in taxonomy["categories"]]
@@ -26,8 +31,8 @@ def label_name(label_id):
     return f"{labels[item['parent']]['name']} / {item['name']}" if item["parent"] else item["name"]
 
 
-def validate_expression(expression: dict) -> dict:
-    labels = {label["id"] for label in taxonomy_catalog()["labels"]}
+def validate_expression(expression: dict, profile="taxonomy") -> dict:
+    labels = {label["id"] for label in taxonomy_catalog(profile)["labels"]}
     count = 0
 
     def visit(node, depth=0):

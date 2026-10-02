@@ -16,6 +16,7 @@ from app.db import create_engine, create_session_factory
 from app.models import PipelineEntry, TaxonomyClassification, TaxonomyRun, TelegramPost
 from app.taxonomy.inference import TaxonomyModel
 from app.taxonomy.jobs import MODEL_KEYS, text_sha256
+from app.taxonomy.profiles import profile_of
 
 
 logger = logging.getLogger(__name__)
@@ -62,7 +63,7 @@ async def finish_job(factory, job_id: int, result: dict | None, elapsed_ms: int,
                     select(TaxonomyClassification).where(TaxonomyClassification.id == job_id).with_for_update()
                 )
             ).scalar_one_or_none()
-            if job is None or job.status != "running":
+            if job is None or job.status not in {"running", "loading"}:
                 return
             post = (
                 await session.execute(select(TelegramPost).where(TelegramPost.id == job.source_post_id))
@@ -76,7 +77,12 @@ async def finish_job(factory, job_id: int, result: dict | None, elapsed_ms: int,
             job.elapsed_ms = elapsed_ms
             if model_version is not None:
                 job.model_version = model_version
-            if post is None or post.is_deleted or job.text_sha256 != text_sha256(post.text):
+            ocr_stale = False
+            if post is not None and profile_of(job) == "humor_ocr":
+                from app.ocr.jobs import current_input
+                value, ocr_run = await current_input(session, job.pipeline_entry_id, post, get_settings())
+                ocr_stale = value is None or not ocr_run or job.input_sha256 != ocr_run.input_sha256
+            if post is None or post.is_deleted or job.text_sha256 != text_sha256(post.text) or ocr_stale:
                 job.status = "stale"
                 job.result = None
                 job.error = None
@@ -111,7 +117,7 @@ async def finish_job(factory, job_id: int, result: dict | None, elapsed_ms: int,
                     entry.stage = "sorted" if other_complete else "received"
                     entry.status = "taxonomy_failed"
             else:
-                job.status = "complete"
+                job.status = result.get("status", "complete") if result else "complete"
                 job.result = result
                 job.error = None
                 if entry is not None:
@@ -144,23 +150,19 @@ async def run() -> None:
     model_key = os.environ.get("TAXONOMY_WORKER_MODEL", "tfidf")
     if model_key not in MODEL_KEYS:
         raise RuntimeError("TAXONOMY_WORKER_MODEL must be tfidf or minilm")
-    if model_key == "minilm":
-        from app.taxonomy.minilm import MiniLmTaxonomyModel
-        model = MiniLmTaxonomyModel(settings.taxonomy_model_dir)
-    else:
-        model = TaxonomyModel(settings.taxonomy_model_dir)
+    model, loaded_profile = None, None
     engine = create_engine(settings)
     factory = create_session_factory(engine=engine)
     try:
         async with factory() as session:
             await session.execute(
                 update(TaxonomyClassification)
-                .where(TaxonomyClassification.status == "running", TaxonomyClassification.model_key == model_key)
+                .where(TaxonomyClassification.status.in_(("running", "loading")), TaxonomyClassification.model_key == model_key)
                 .values(status="queued", started_at=None)
             )
             await session.execute(
                 update(TaxonomyRun)
-                .where(TaxonomyRun.status == "running", TaxonomyRun.model_key == model_key)
+                .where(TaxonomyRun.status.in_(("running", "loading")), TaxonomyRun.model_key == model_key)
                 .values(status="queued", started_at=None)
             )
             await session.commit()
@@ -183,7 +185,44 @@ async def run() -> None:
                 if row is None or row[0].text_sha256 != text_sha256(row[1].text) or row[1].is_deleted:
                     await finish_job(factory, job_id, None, 0)
                     continue
-                result = await asyncio.to_thread(model.classify, row[1].text or "")
+                profile = profile_of(row[0])
+                model_input = row[1].text or ""
+                if profile == "humor_ocr":
+                    from app.ocr.jobs import current_input
+                    async with factory() as session:
+                        model_input, ocr_run = await current_input(session, row[0].pipeline_entry_id, row[1], settings)
+                    if model_input is None or not ocr_run or ocr_run.input_sha256 != row[0].input_sha256:
+                        await finish_job(factory, job_id, None, 0, "OCR устарел; повторите подготовку")
+                        continue
+                    if not model_input:
+                        result = {"status": "media_only" if row[1].media_type else "empty", "category": "only_media" if row[1].media_type else "empty",
+                            "top_3": [], "features": [], "scores": {}, "technical_complexity": None,
+                            "review_status": "no_text", "profile": profile, "score_kind": "no_model_inference"}
+                        await finish_job(factory, job_id, result, 0)
+                        continue
+                if loaded_profile != profile:
+                    # Один encoder в памяти. Сначала освобождаем предыдущий,
+                    # затем загружаем новый, не держим два профиля одновременно.
+                    import gc
+                    model = None
+                    gc.collect()
+                    async with factory() as session:
+                        await session.execute(update(TaxonomyClassification).where(TaxonomyClassification.id == job_id).values(status="loading"))
+                        await session.execute(update(TaxonomyRun).where(TaxonomyRun.id == row[0].current_run_id).values(status="loading"))
+                        await session.commit()
+                    directory = settings.humor_model_dir if profile == "humor_ocr" else settings.taxonomy_model_dir
+                    if model_key == "minilm":
+                        from app.taxonomy.minilm import MiniLmTaxonomyModel
+                        model = await asyncio.to_thread(MiniLmTaxonomyModel, directory)
+                    else:
+                        model = await asyncio.to_thread(TaxonomyModel, directory)
+                    loaded_profile = profile
+                    async with factory() as session:
+                        await session.execute(update(TaxonomyClassification).where(TaxonomyClassification.id == job_id).values(status="running"))
+                        await session.execute(update(TaxonomyRun).where(TaxonomyRun.id == row[0].current_run_id).values(status="running"))
+                        await session.commit()
+                started = time.perf_counter()
+                result = await asyncio.to_thread(model.classify, model_input)
                 await finish_job(factory, job_id, result, max(1, round((time.perf_counter() - started) * 1000)), model_version=model.model_version)
             except Exception as exc:
                 logger.error("taxonomy classification failed: job_id=%s type=%s", job_id, type(exc).__name__)

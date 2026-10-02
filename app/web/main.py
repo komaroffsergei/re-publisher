@@ -49,6 +49,7 @@ from app.taxonomy.jobs import (
 )
 from app.web.selection_routes import register_filter_routes
 from app.web.publication_routes import register_publication_routes
+from app.taxonomy.profiles import job_key, profile_of, PROFILES
 from app.web.source_media import (
     album_primary,
     downloaded_media_path,
@@ -177,7 +178,7 @@ async def board_state_for_entries(app, session, entry_ids):
             )
         )
     ).scalars():
-        jobs.setdefault(job.pipeline_entry_id, {})[job.model_key] = job
+        jobs.setdefault(job.pipeline_entry_id, {})[job_key(job.model_key, profile_of(job))] = job
     selections = await load_states(session, pairs)
     states = {}
     for entry, post in rows:
@@ -185,8 +186,17 @@ async def board_state_for_entries(app, session, entry_ids):
             key: public_job(job, post.text or "")
             for key, job in jobs.get(entry.id, {}).items()
         }
+        humor_jobs = [j for j in jobs.get(entry.id, {}).values() if profile_of(j) == "humor_ocr"]
+        if humor_jobs:
+            from app.ocr.jobs import current_input
+            from app.config import get_settings
+            model_input, ocr_run = await current_input(session, entry.id, post, get_settings())
+            for job in humor_jobs:
+                if job.status in {"complete", "media_only", "empty"} and (model_input is None or not ocr_run or job.input_sha256 != ocr_run.input_sha256):
+                    state = taxonomies[job_key(job.model_key, "humor_ocr")]
+                    state.update(status="stale", result=None, elapsed_ms=None)
         active = any(
-            job["status"] in {"queued", "running"} for job in taxonomies.values()
+            job["status"] in {"ocr", "queued", "loading", "running"} for job in taxonomies.values()
         )
         selection = selections.get(entry.id, {"marks": [], "checks": []})
         states[entry.id] = {
@@ -465,7 +475,13 @@ def register_routes(app: FastAPI) -> None:
         ):
             raise HTTPException(415, detail="Нужен application/json")
         async with session_factory(request)() as session:
-            job = await enqueue_taxonomy(session, entry_id, model_key)
+            try:
+                body = await request.json()
+            except ValueError:
+                raise HTTPException(422, "Нужен JSON-объект")
+            if not isinstance(body, dict) or set(body) - {"profile"} or body.get("profile", "taxonomy") not in PROFILES:
+                raise HTTPException(422, "Неизвестный профиль или поле")
+            job = await enqueue_taxonomy(session, entry_id, model_key, body.get("profile", "taxonomy"))
             await session.commit()
             return public_job(job)
 
@@ -501,11 +517,38 @@ def register_routes(app: FastAPI) -> None:
                 ).scalars()
             )
             has_more = len(runs) > 50
+            public_runs = [public_run(run, row[0].text) for run in runs[:50]]
+            if any(profile_of(run) == "humor_ocr" for run in runs[:50]):
+                from app.ocr.jobs import current_input
+                value, ocr_run = await current_input(session, entry_id, row[0], request.app.state.settings)
+                for item, run in zip(public_runs, runs[:50]):
+                    item["is_current_input"] = item["is_current_text"] and (profile_of(run) == "taxonomy" or value is not None and ocr_run is not None and run.input_sha256 == ocr_run.input_sha256)
             return {
-                "runs": [public_run(run, row[0].text) for run in runs[:50]],
+                "runs": public_runs,
                 "next_before_id": runs[49].id if has_more else None,
                 "catalog": taxonomy_catalog(),
+                "catalogs": {p: taxonomy_catalog(p) for p in PROFILES},
             }
+
+    @app.get("/api/pipeline/{entry_id}/ocr", dependencies=[auth])
+    @app.post("/api/pipeline/{entry_id}/ocr", dependencies=[auth])
+    async def pipeline_ocr(request: Request, entry_id: int):
+        from app.web.selection_routes import input_data, EmptyInput
+        from app.ocr.jobs import enqueue_ocr, public_ocr
+        if request.method == "POST":
+            await input_data(request, EmptyInput)
+        async with session_factory(request)() as session:
+            row = (await session.execute(select(PipelineEntry, TelegramPost).join(TelegramPost,
+                TelegramPost.id == PipelineEntry.source_post_id).join(TelegramChat,
+                TelegramChat.peer_id == TelegramPost.chat_peer_id).where(PipelineEntry.id == entry_id,
+                TelegramChat.folder_name == "MAX").with_for_update(of=PipelineEntry))).first()
+            if not row:
+                raise HTTPException(404, "Карточка не найдена")
+            entry, post = row
+            if request.method == "POST":
+                await enqueue_ocr(session, entry, post, request.app.state.settings, retry=True)
+                await session.commit()
+            return await public_ocr(session, entry_id, post, request.app.state.settings)
 
     @app.get("/source-media/{post_id}", dependencies=[auth])
     async def source_media_file(request: Request, post_id: int):

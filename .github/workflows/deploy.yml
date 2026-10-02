@@ -66,6 +66,21 @@ jobs:
           cache-to: type=gha,mode=max
       - run: echo "Image digest ${{ steps.build.outputs.digest }}"
       - run: echo "MiniLM image digest ${{ steps.minilm.outputs.digest }}"
+      - uses: docker/build-push-action@v6
+        id: ocr
+        with:
+          context: .
+          file: Dockerfile.ocr
+          build-args: BASE_IMAGE=ghcr.io/komaroffsergei/re-publisher@${{ steps.build.outputs.digest }}
+          push: true
+          tags: ghcr.io/komaroffsergei/re-publisher:ocr-${{ github.sha }}
+          cache-from: type=gha,scope=ocr
+          cache-to: type=gha,mode=max,scope=ocr
+      - name: Check OCR dependencies in the production image
+        env:
+          OCR_IMAGE: ghcr.io/komaroffsergei/re-publisher@${{ steps.ocr.outputs.digest }}
+        run: docker run --rm "$OCR_IMAGE" python -c "import rapidocr,onnxruntime;assert onnxruntime.__version__ == '1.30.0'"
+      - run: echo "OCR image digest ${{ steps.ocr.outputs.digest }}"
 
 # Deployment uses the pinned image built outside the VPS.
 # The workflow has no SSH credentials or host-wide cleanup.

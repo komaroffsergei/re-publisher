@@ -61,6 +61,8 @@ class TelegramPost(TimestampMixin, Base):
     media_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     media_download_status: Mapped[str] = mapped_column(Text, server_default="missing", nullable=False)
     media_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ocr_preview_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ocr_preview_status: Mapped[str] = mapped_column(Text, server_default="missing", nullable=False)
     raw: Mapped[dict] = mapped_column(JSONB, nullable=False)
     is_deleted: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
 
@@ -549,13 +551,16 @@ class PipelineEntry(TimestampMixin, Base):
 
 class TaxonomyClassification(Base):
     __tablename__ = "taxonomy_classifications"
-    __table_args__ = (UniqueConstraint("pipeline_entry_id", "model_key", name="uq_taxonomy_classifications_entry_model"),)
+    __table_args__ = (UniqueConstraint("pipeline_entry_id", "model_key", "profile", name="uq_taxonomy_classifications_entry_model_profile"),)
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     pipeline_entry_id: Mapped[int] = mapped_column(
         ForeignKey("pipeline_entries.id", ondelete="CASCADE"), nullable=False
     )
     model_key: Mapped[str] = mapped_column(Text, server_default="tfidf", nullable=False)
+    profile: Mapped[str] = mapped_column(Text, server_default="taxonomy", nullable=False)
+    input_sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ocr_run_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     current_run_id: Mapped[int | None] = mapped_column(ForeignKey("taxonomy_runs.id", ondelete="SET NULL"), nullable=True)
     source_post_id: Mapped[int] = mapped_column(ForeignKey("telegram_posts.id", ondelete="CASCADE"), nullable=False)
     text_sha256: Mapped[str] = mapped_column(Text, nullable=False)
@@ -580,6 +585,9 @@ class TaxonomyRun(Base):
     pipeline_entry_id: Mapped[int] = mapped_column(ForeignKey("pipeline_entries.id", ondelete="CASCADE"), nullable=False)
     source_post_id: Mapped[int] = mapped_column(ForeignKey("telegram_posts.id", ondelete="CASCADE"), nullable=False)
     model_key: Mapped[str] = mapped_column(Text, nullable=False)
+    profile: Mapped[str] = mapped_column(Text, server_default="taxonomy", nullable=False)
+    input_sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ocr_run_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     text_sha256: Mapped[str] = mapped_column(Text, nullable=False)
     model_version: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False)
@@ -621,6 +629,7 @@ class SelectionFilterVersion(Base):
     number: Mapped[int] = mapped_column(Integer, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     model_key: Mapped[str] = mapped_column(Text, nullable=False)
+    profile: Mapped[str] = mapped_column(Text, server_default="taxonomy", nullable=False)
     mark_id: Mapped[int] = mapped_column(ForeignKey("filter_marks.id"), nullable=False)
     assigned_label_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     expression: Mapped[dict] = mapped_column(JSONB, nullable=False)

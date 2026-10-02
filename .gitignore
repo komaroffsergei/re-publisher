@@ -14,6 +14,7 @@ dist/
 secrets/
 .env
 .env.*
+ocr.env
 !.env.example
 
 sessions/

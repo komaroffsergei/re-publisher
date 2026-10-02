@@ -64,7 +64,7 @@ services:
       DB_POOL_SIZE: "1"
       DB_MAX_OVERFLOW: "0"
     networks: [backend]
-    volumes: ["./media:/app/media:ro"]
+    volumes: ["./media:/app/media:ro", "./cache/ocr-previews:/app/cache/ocr-previews:ro", "./models:/app/models:ro"]
     mem_limit: 256m
     cpus: 0.25
     read_only: true
@@ -86,6 +86,8 @@ services:
     networks: [backend]
     volumes:
       - ./models:/app/models:ro
+      - ./media:/app/media:ro
+      - ./cache/ocr-previews:/app/cache/ocr-previews:ro
     mem_limit: 768m
     cpus: 1.0
     read_only: true
@@ -111,12 +113,42 @@ services:
     networks: [backend]
     volumes:
       - ./models:/app/models:ro
+      - ./media:/app/media:ro
+      - ./cache/ocr-previews:/app/cache/ocr-previews:ro
     mem_limit: 2048m
     cpus: 1.0
     read_only: true
     tmpfs: [/tmp]
     healthcheck:
       test: [CMD, python, -c, "import os,time;assert time.time()-os.path.getmtime('/tmp/taxonomy-worker-heartbeat')<45"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+
+  ocr-worker:
+    image: ${PUBLISHER_OCR_IMAGE:-publisher-ocr-disabled}
+    profiles: [ocr]
+    pull_policy: never
+    restart: unless-stopped
+    # Отдельный env содержит только DB_DSN и настройки OCR, без Telegram/MAX.
+    env_file: ocr.env
+    command: [python, -m, app.ocr.worker]
+    networks: [backend]
+    volumes:
+      - ./models:/app/models:ro
+      - ./media:/app/media:ro
+      - ./cache/ocr-previews:/app/cache/ocr-previews:ro
+      - ./cache/ocr-results:/app/cache/ocr-results
+    environment: {DB_POOL_SIZE: "1", DB_MAX_OVERFLOW: "0", OCR_ENABLED: "true", OMP_NUM_THREADS: "1"}
+    mem_limit: 768m
+    cpus: 0.5
+    pids_limit: 100
+    read_only: true
+    tmpfs: [/tmp]
+    logging: {driver: json-file, options: {max-size: "5m", max-file: "3"}}
+    healthcheck:
+      test: [CMD, python, -c, "import json,time;d=json.load(open('/tmp/publisher-health-ocr-worker.json'));assert time.time()-d['heartbeat_at']<60 and not d['error']"]
       interval: 20s
       timeout: 5s
       retries: 3

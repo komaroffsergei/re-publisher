@@ -40,7 +40,7 @@ async def mark_source(session, entry, post, chat, manual=False):
             )
         ).scalars()
     )
-    if any(j.status in {"queued", "running"} for j in jobs):
+    if any(j.status in {"ocr", "queued", "loading", "running"} for j in jobs):
         raise HTTPException(409, "Дождитесь завершения сортировки")
     if not any(
         j.status in {"complete", "media_only"}

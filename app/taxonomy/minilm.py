@@ -17,19 +17,19 @@ from app.taxonomy.artifact import artifact_version, checkpoint_path, configured_
 class Classifier(nn.Module):
     """Same pooling and heads as the frozen training script."""
 
-    def __init__(self, encoder: nn.Module, count: int):
+    def __init__(self, encoder: nn.Module, count: int, with_complexity: bool = True):
         super().__init__()
         self.encoder = encoder
         self.dropout = nn.Dropout(0.1)
         self.labels = nn.Linear(encoder.config.hidden_size, count)
-        self.complexity = nn.Linear(encoder.config.hidden_size, 1)
+        self.complexity = nn.Linear(encoder.config.hidden_size, 1) if with_complexity else None
 
     def forward(self, inputs):
         hidden = self.encoder(**inputs).last_hidden_state
         attention = inputs["attention_mask"].unsqueeze(-1)
         pooled = (hidden * attention).sum(dim=1) / attention.sum(dim=1).clamp(min=1)
         pooled = self.dropout(pooled)
-        return self.labels(pooled), self.complexity(pooled).squeeze(-1)
+        return self.labels(pooled), self.complexity(pooled).squeeze(-1) if self.complexity is not None else None
 
 
 class MiniLmTaxonomyModel:
@@ -51,7 +51,7 @@ class MiniLmTaxonomyModel:
         self.calibration = training.get('calibration', {})
         self.tokenizer = AutoTokenizer.from_pretrained(candidate / "tokenizer", local_files_only=True)
         config = AutoConfig.from_pretrained(candidate, local_files_only=True)
-        self.model = Classifier(AutoModel.from_config(config), len(expected))
+        self.model = Classifier(AutoModel.from_config(config), len(expected), self.taxonomy.get("profile") != "humor_ocr")
         weights = checkpoint_path(candidate, training)
         self.model_version = artifact_version(model_dir, 'minilm', weights)
         self.model.load_state_dict(load_file(str(weights)))
@@ -59,6 +59,8 @@ class MiniLmTaxonomyModel:
 
     def classify(self, text: str) -> dict:
         with torch.inference_mode():
+            if self.taxonomy.get("profile") == "humor_ocr" and len(self.tokenizer.encode(text, truncation=False)) > self.max_length:
+                raise ValueError("Вход длиннее 512 токенов; нужен ручной разбор")
             encoded = self.tokenizer(text, truncation=True, max_length=self.max_length, return_tensors="pt")
             logits, complexity = self.model(encoded)
             for index, name in enumerate(self.names):
@@ -66,4 +68,4 @@ class MiniLmTaxonomyModel:
                 if parameters:
                     logits[0, index] = parameters['a'] * logits[0, index] + parameters['b']
             scores = dict(zip(self.names, torch.sigmoid(logits)[0].tolist()))
-            return format_result(self.taxonomy, scores, float(complexity[0]))
+            return format_result(self.taxonomy, scores, None if self.taxonomy.get("profile") == "humor_ocr" else float(complexity[0]))

@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
@@ -43,6 +43,7 @@ class FilterInput(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     enabled: bool = True
     model_key: Literal["tfidf", "minilm"] = "tfidf"
+    profile: Literal["taxonomy", "humor_ocr"] = "taxonomy"
     mark_id: int = Field(gt=0)
     expression: dict
     filter_id: int | None = None
@@ -58,8 +59,8 @@ class FilterInput(BaseModel):
 
     @field_validator("expression")
     @classmethod
-    def validate_tree(cls, value):
-        return validate_expression(value)
+    def validate_tree(cls, value, info: ValidationInfo):
+        return validate_expression(value, info.data.get("profile", "taxonomy"))
 
 
 def digest(draft):
@@ -155,9 +156,10 @@ def register_filter_routes(app, require_auth, session_factory, templates):
                 .where(FilterEvaluation.outcome == "matched", TaxonomyClassification.status == "complete",
                        TelegramPost.is_deleted.is_(False))
                 .group_by(FilterEvaluation.version_id))).all())
-            return {"catalog": taxonomy_catalog(), "filters": [{"id": item.id, "name": item.name,
+            return {"catalog": taxonomy_catalog(), "catalogs": {p: taxonomy_catalog(p) for p in ("taxonomy", "humor_ocr")}, "filters": [{"id": item.id, "name": item.name,
                 "enabled": item.enabled, "archived": item.archived, "base_version_id": version.id,
                 "number": version.number, "model_key": version.model_key, "mark_id": version.mark_id,
+                "profile": version.profile,
                 "assigned_label_id": version.assigned_label_id,
                 "mark_name": mark.name,
                 "expression": version.expression, "matches": matches.get(version.id, 0),
@@ -194,11 +196,13 @@ def register_filter_routes(app, require_auth, session_factory, templates):
             session.add(item)
             await session.flush()
             version = SelectionFilterVersion(filter_id=item.id, number=number, name=draft.name,
-                model_key=draft.model_key, mark_id=draft.mark_id, expression=draft.expression)
+                model_key=draft.model_key, profile=draft.profile, mark_id=draft.mark_id, expression=draft.expression)
             session.add(version)
             await session.flush()
             item.active_version_id = version.id
-            application = await enqueue_application(session, version) if draft.enabled else None
+            # Новый профиль не запускает массовый OCR старого буфера при сохранении
+            # фильтра. Его оценки появляются при ручном запуске и для новых постов.
+            application = await enqueue_application(session, version) if draft.enabled and draft.profile == "taxonomy" else None
             await session.commit()
             return {"id": item.id, "version_id": version.id, "application_id": application.id if application else None}
 
