@@ -66,3 +66,35 @@ def test_quality_report_alone_is_not_a_publication_content_review(tmp_path, monk
     directory, _ = bundle(tmp_path, monkeypatch)
     with pytest.raises(ValueError, match='проверка содержимого'):
         checked_routes(directory)
+
+
+def test_partial_import_keeps_failed_and_missing_topics_disabled(tmp_path, monkeypatch):
+    directory, report = bundle(tmp_path, monkeypatch)
+    report['all_routes_ready'] = False
+    del report['routes']['is_joke']
+    report['routes']['is_ai_beginner_material']['enabled'] = False
+    report['routes']['is_ai_beginner_material'].update(test_matched=65, test_correct=57)
+    (directory / 'evaluation.json').write_text(json.dumps(report))
+    rows = checked_routes(directory, review_policy(), allow_partial=True)
+    assert {r['topic']['id'] for r in rows if not r['enabled']} == {'is_joke', 'is_ai_beginner_material'}
+    assert sum(r['enabled'] for r in rows) == 7
+    assert all(r['expression'] is None for r in rows if not r['enabled'])
+    assert all(r['expression']['children'][0]['threshold'] == 73 for r in rows if r['enabled'])
+
+
+def test_partial_import_does_not_relax_the_gate_of_a_passed_topic(tmp_path, monkeypatch):
+    directory, report = bundle(tmp_path, monkeypatch)
+    report['all_routes_ready'] = False
+    del report['routes']['is_joke']
+    report['routes']['is_ml_research']['test_correct'] = 44
+    (directory / 'evaluation.json').write_text(json.dumps(report))
+    with pytest.raises(ValueError, match='проверка корпуса'):
+        checked_routes(directory, review_policy(), allow_partial=True)
+
+
+def test_partial_import_refuses_a_report_without_any_passed_topic(tmp_path, monkeypatch):
+    directory, report = bundle(tmp_path, monkeypatch)
+    report.update(all_routes_ready=False, routes={})
+    (directory / 'evaluation.json').write_text(json.dumps(report))
+    with pytest.raises(ValueError, match='No publication routes'):
+        checked_routes(directory, review_policy(), allow_partial=True)

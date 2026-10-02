@@ -26,13 +26,13 @@ from app.taxonomy.artifact import artifact_version, configured_artifact, checkpo
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def checked_routes(bundle: Path, review_policy=None):
+def checked_routes(bundle: Path, review_policy=None, *, allow_partial=False):
     topics = json.loads((ROOT / 'config/max_channel_topics.json').read_text(encoding='utf-8'))
     report = json.loads((bundle / 'evaluation.json').read_text(encoding='utf-8'))
     taxonomy = json.loads((bundle / 'taxonomy.json').read_text(encoding='utf-8'))
     if taxonomy['version'] != taxonomy_catalog()['version']:
         raise ValueError('Runtime taxonomy differs from the trained artifact')
-    if not report.get('all_routes_ready'):
+    if not report.get('all_routes_ready') and not allow_partial:
         raise ValueError('Not all nine publication routes passed the held-out checks')
     versions = {}
     for key in ['tfidf', 'minilm']:
@@ -46,7 +46,17 @@ def checked_routes(bundle: Path, review_policy=None):
     result = []
     for topic in topics['topics']:
         gate = dict(report['routes'].get(topic['id'], {}))
-        if not gate.get('enabled') or gate.get('model_key') not in versions:
+        if gate.get('enabled') is not True:
+            if not allow_partial:
+                raise ValueError('Unverified route: ' + topic['id'])
+            # Отсутствие порога не заменяем нулём. Непрошедшая тема не
+            # получает новую версию условия и не допускается к отправке.
+            reason = ('Не пройдена проверка отложенных совпадений' if gate else
+                      'Validation не дал проверенный маршрут')
+            result.append({'topic': topic, 'gate': gate, 'expression': None,
+                           'enabled': False, 'reason': reason})
+            continue
+        if gate.get('model_key') not in versions:
             raise ValueError('Unverified route: ' + topic['id'])
         if gate.get('model_version') != versions[gate['model_key']]:
             raise ValueError('Evaluation was not made with the supplied model weights')
@@ -64,7 +74,9 @@ def checked_routes(bundle: Path, review_policy=None):
                            SimpleNamespace(id=1, expression=expression, model_key=gate['model_key']))
         if error:
             raise ValueError(error)
-        result.append({'topic': topic, 'gate': gate, 'expression': expression})
+        result.append({'topic': topic, 'gate': gate, 'expression': expression, 'enabled': True})
+    if not any(row['enabled'] for row in result):
+        raise ValueError('No publication routes passed the held-out checks')
     return result
 
 
@@ -98,6 +110,18 @@ async def install(rows):
                     if len(candidates) > 1:
                         raise ValueError('Several existing joke filters; refuse to select one arbitrarily')
                     rule = candidates[0] if candidates else None
+                if not row['enabled']:
+                    # Старые версии, присвоенные лейблы и история остаются.
+                    # Меняем только связанный с этой темой автоматический фильтр.
+                    if rule is not None:
+                        rule.enabled = False
+                    if route is not None:
+                        route.enabled = False
+                        route.quality_gate = {**gate, 'enabled': False, 'reason': row['reason']}
+                    changes.append({'topic': topic['id'], 'enabled': False, 'reason': row['reason'],
+                        'filter_id': rule.id if rule else None, 'channel_id': str(channel.chat_id),
+                        'old_buffer_queued': 0})
+                    continue
                 if rule is None:
                     rule = SelectionFilter(name=topic['mark_name'])
                     session.add(rule); await session.flush()
@@ -116,7 +140,7 @@ async def install(rows):
                     session.add(route)
                 route.enabled, route.approved_version_id, route.quality_gate = True, version.id, gate
                 channel.check_requested = True
-                changes.append({'topic': topic['id'], 'filter_id': rule.id, 'version_id': version.id,
+                changes.append({'topic': topic['id'], 'enabled': True, 'filter_id': rule.id, 'version_id': version.id,
                     'channel_id': str(channel.chat_id), 'model': gate['model_version'], 'old_buffer_queued': 0})
         return changes
     finally:
@@ -130,10 +154,15 @@ def main():
     parser.add_argument('--review-policy', type=Path, required=True,
                         help='Protected explicit Codex publication holds; no raw posts in Git')
     parser.add_argument('--commit', action='store_true')
+    parser.add_argument('--allow-partial', action='store_true',
+                        help='Install passed topics; disable failed topics without inventing thresholds')
     args = parser.parse_args()
-    rows = checked_routes(args.bundle, json.loads(args.review_policy.read_text(encoding='utf-8')))
+    rows = checked_routes(args.bundle, json.loads(args.review_policy.read_text(encoding='utf-8')),
+                          allow_partial=args.allow_partial)
     result = asyncio.run(install(rows)) if args.commit else [
-        {'topic': r['topic']['id'], 'model': r['gate']['model_version'], 'expression': r['expression']} for r in rows]
+        {'topic': r['topic']['id'], 'enabled': r['enabled'],
+         'model': r['gate'].get('model_version'), 'expression': r['expression'],
+         'reason': r.get('reason')} for r in rows]
     print(json.dumps({'committed': args.commit, 'routes': result}, ensure_ascii=False))
 
 

@@ -1,5 +1,5 @@
 {
-  "version": "max-20260929-draft3",
+  "version": "max-channels-20261001-v3",
   "status": "draft_for_codex_pilot_review",
   "required_broad_categories": [
     "tool_description"
@@ -189,7 +189,16 @@
     "is_event_invitation",
     "is_job_vacancy",
     "is_scientific_paper",
-    "is_joke"
+    "is_joke",
+    "is_ai_educational",
+    "is_ai_beginner_material",
+    "is_ml_research",
+    "is_ai_access_pricing",
+    "is_ai_workflow",
+    "is_ai_visual_media",
+    "is_agentic_coding",
+    "is_ai_tool_review",
+    "caption_has_context"
   ],
   "technical_complexity": [
     0,
@@ -199,5 +208,17 @@
     4,
     5,
     "неясно"
-  ]
+  ],
+  "feature_names": {
+    "is_joke": "Шутки",
+    "is_ai_educational": "Образование",
+    "is_ai_beginner_material": "Для чайников",
+    "is_ml_research": "Исследования ML",
+    "is_ai_access_pricing": "Подписки, API и лимиты",
+    "is_ai_workflow": "ИИ в рабочих процессах",
+    "is_ai_visual_media": "Картинки и видео",
+    "is_agentic_coding": "Код с агентами",
+    "is_ai_tool_review": "Инструменты",
+    "caption_has_context": "Подпись даёт контекст"
+  }
 }

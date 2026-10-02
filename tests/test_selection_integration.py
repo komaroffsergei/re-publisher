@@ -460,7 +460,7 @@ async def test_manual_dictionary_label_with_two_model_conditions(db, client):
         assert response.status_code == 200, response.text
         data = response.json()
         assert (
-            data["matched"] == 1 and len(data["examples"][0]["trace"]["children"]) == 38
+            data["matched"] == 1 and len(data["examples"][0]["trace"]["children"]) == 47
         )
         assert "assigned" not in data["examples"][0]["trace"]
         assert len((await client.get("/api/pipeline/marks")).json()["marks"]) == 1
@@ -575,7 +575,7 @@ async def test_current_pages_and_dashboard_match_database(db, client):
                 "catalog"
             ]["labels"]
         )
-        == 38
+        == 47
     )
     async with db() as session:
         other_chat = TelegramChat(

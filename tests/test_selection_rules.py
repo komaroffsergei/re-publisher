@@ -130,5 +130,9 @@ def test_dictionary_label_has_no_model_score():
 
 
 def test_catalog_contains_all_model_scores():
-    assert len(taxonomy_catalog()["labels"]) == 38
+    assert len(taxonomy_catalog()["labels"]) == 47
     assert evaluate(validate_expression(leaf("is_ad")), {"is_ad": .8})[0] is True
+    for name in ('is_ai_educational', 'is_ai_beginner_material', 'is_ml_research',
+                 'is_ai_access_pricing', 'is_ai_workflow', 'is_ai_visual_media',
+                 'is_agentic_coding', 'is_ai_tool_review', 'caption_has_context'):
+        assert evaluate(validate_expression(leaf(name)), {name: .8})[0] is True
