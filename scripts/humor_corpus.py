@@ -37,7 +37,13 @@ def decisions(paths):
     return result
 
 
-def assemble(ocr_paths, annotation_paths, known_album_members=None, reserved_sources=()):
+def caption_hash(caption):
+    value = " ".join((caption or "").split())
+    # Короткие общие подписи вроде IT Memes не идентифицируют материал.
+    return hashlib.sha256(value.encode()).hexdigest() if len(value) >= 80 else None
+
+
+def assemble(ocr_paths, annotation_paths, known_album_members=None, reserved_sources=(), reserved_captions=()):
     raw = {}
     for row in read_rows(ocr_paths):
         raw[row["peer"], row["message"]] = row
@@ -56,6 +62,9 @@ def assemble(ocr_paths, annotation_paths, known_album_members=None, reserved_sou
         # train-копии с другой подписью. Список хранится отдельно от материалов.
         if any((r["peer"], r["message"]) in reserved_sources for r in items):
             excluded["reserved_source"] += 1
+            continue
+        if caption_hash(primary["caption"]) in reserved_captions:
+            excluded["reserved_caption_copy"] += 1
             continue
         # Production использует длинную подпись без OCR. Не обучаем на
         # надписях, которые этот же профиль не увидит на сайте.
@@ -170,7 +179,8 @@ def main():
     reserved = {tuple(r) for r in policy["reserved_sources"]}
     ocr_directory = args.directory / policy.get("ocr_directory", ".")
     paths = [p for p in sorted(ocr_directory.glob("ocr-*.jsonl")) if re.fullmatch(r"ocr--?\d+-\d{3}\.jsonl", p.name)]
-    rows, excluded = assemble(paths, sorted(args.directory.glob("codex-annotations-*.jsonl")), albums, reserved)
+    rows, excluded = assemble(paths, sorted(args.directory.glob("codex-annotations-*.jsonl")), albums, reserved,
+                             set(policy.get("reserved_caption_sha256", [])))
     rows = partition(rows, list(read_rows([args.directory / "codex-repeat-groups.jsonl"])) if (args.directory / "codex-repeat-groups.jsonl").exists() else [])
     from tokenizers import Tokenizer
     tokenizer_path = Path(policy["tokenizer_path"])

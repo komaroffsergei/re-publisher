@@ -47,3 +47,18 @@ def test_long_caption_has_same_text_only_input_as_runtime(tmp_path):
     row["media_sha256"] = None
     raw.write_text(json.dumps(row),encoding="utf-8")
     assert not corpus.assemble([raw],[labels])[0][0]["ocr_eligible"]
+
+
+def test_reserved_caption_cannot_return_as_another_message(tmp_path):
+    from app.ocr.engine import input_digest
+    caption = "Документация сохранённого контрольного материала " * 3
+    raw, labels = tmp_path / "ocr.jsonl", tmp_path / "labels.jsonl"
+    raw.write_text(json.dumps({"peer":2,"message":99,"grouped_id":None,"date":"2026-10-03",
+        "caption":caption,"media_sha256":"different-file","ocr":{"status":"no_text","blocks":[]}}))
+    labels.write_text(json.dumps({"peer":2,"message":99,"input_sha256":input_digest(caption,[{"status":"no_text","blocks":[]}]),
+        "is_joke":"нет","input_has_context":"да","reason":"fixture","annotator":"Codex /root"}))
+    rows, excluded = corpus.assemble([raw],[labels],reserved_captions={corpus.caption_hash(caption)})
+    assert rows == [] and excluded == {"reserved_caption_copy":1}
+    assert corpus.caption_hash("IT Memes") is None
+    assert corpus.caption_hash("  ") is None
+    assert corpus.caption_hash(caption.replace(" ", "\n")) == corpus.caption_hash(caption)

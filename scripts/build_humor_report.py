@@ -51,7 +51,7 @@ def main():
     policy=json.loads((args.directory/'corpus-policy.json').read_text(encoding='utf-8'))
     paths=[f for f in sorted((args.directory/policy.get('ocr_directory','.')).glob('ocr-*.jsonl')) if re.fullmatch(r'ocr--?\d+-\d{3}\.jsonl',f.name)]
     annotations=sorted(args.directory.glob('codex-annotations-*.jsonl'))
-    rows,excluded=assemble(paths,annotations,{(r['peer'],r['grouped_id']):r['members'] for r in policy['albums']},set(map(tuple,policy['reserved_sources'])))
+    rows,excluded=assemble(paths,annotations,{(r['peer'],r['grouped_id']):r['members'] for r in policy['albums']},set(map(tuple,policy['reserved_sources'])),set(policy.get('reserved_caption_sha256',[])))
     rows=partition(rows,list(read_rows([args.directory/'codex-repeat-groups.jsonl'])) if (args.directory/'codex-repeat-groups.jsonl').exists() else [])
     from tokenizers import Tokenizer
     if hashlib.sha256(Path(policy['tokenizer_path']).read_bytes()).hexdigest()!=policy['tokenizer_sha256']:
