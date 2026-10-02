@@ -20,12 +20,13 @@ from app.db import create_engine, create_session_factory
 from app.models import FilterMark, MaxChannel, MaxPublicationRoute, SelectionFilter, SelectionFilterVersion
 from app.publication.payload import sha_json
 from app.publication.service import gate_error
+from app.publication.review_guard import policy_error
 from app.taxonomy.artifact import artifact_version, configured_artifact, checkpoint_path
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def checked_routes(bundle: Path):
+def checked_routes(bundle: Path, review_policy=None):
     topics = json.loads((ROOT / 'config/max_channel_topics.json').read_text(encoding='utf-8'))
     report = json.loads((bundle / 'evaluation.json').read_text(encoding='utf-8'))
     taxonomy = json.loads((bundle / 'taxonomy.json').read_text(encoding='utf-8'))
@@ -40,6 +41,8 @@ def checked_routes(bundle: Path):
             training = json.loads((artifact / 'training.json').read_text(encoding='utf-8'))
             artifact = checkpoint_path(artifact, training)
         versions[key] = artifact_version(bundle, key, artifact)
+    if error := policy_error(review_policy):
+        raise ValueError(error)
     result = []
     for topic in topics['topics']:
         gate = dict(report['routes'].get(topic['id'], {}))
@@ -54,6 +57,7 @@ def checked_routes(bundle: Path):
             {'op': 'condition', 'label_id': topic['id'], 'compare': 'gte', 'threshold': round(thresholds[0] * 100, 8)},
             {'op': 'condition', 'label_id': 'caption_has_context', 'compare': 'gte', 'threshold': round(thresholds[1] * 100, 8)}]})
         gate['expression_sha256'] = sha_json(expression)
+        gate['review_policy'] = review_policy
         # Ту же проверку использует отправитель перед публикацией.
         from types import SimpleNamespace
         error = gate_error(SimpleNamespace(quality_gate=gate, approved_version_id=1),
@@ -123,9 +127,11 @@ def main():
     sys.stdout.reconfigure(encoding='utf-8')
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('bundle', type=Path)
+    parser.add_argument('--review-policy', type=Path, required=True,
+                        help='Protected explicit Codex publication holds; no raw posts in Git')
     parser.add_argument('--commit', action='store_true')
     args = parser.parse_args()
-    rows = checked_routes(args.bundle)
+    rows = checked_routes(args.bundle, json.loads(args.review_policy.read_text(encoding='utf-8')))
     result = asyncio.run(install(rows)) if args.commit else [
         {'topic': r['topic']['id'], 'model': r['gate']['model_version'], 'expression': r['expression']} for r in rows]
     print(json.dumps({'committed': args.commit, 'routes': result}, ensure_ascii=False))

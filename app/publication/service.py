@@ -15,6 +15,7 @@ from app.models import (FilterMark, MaxChannel, MaxObservedMessage, MaxPublicati
                         MaxPublicationRoute, PipelineEntry, PostFilterMark, SelectionFilter,
                         SelectionFilterVersion, TaxonomyClassification, TelegramChat, TelegramPost)
 from app.publication.payload import PreparationError, build_snapshot, message_parts, sha_json
+from app.publication.review_guard import PublicationHold, hold_reason, policy_error
 from app.taxonomy.jobs import text_sha256
 from app.web.source_media import album_primary
 
@@ -36,7 +37,7 @@ def gate_error(route, version) -> str | None:
             or not isinstance(gate.get('model_version'), str) or not gate['model_version'].strip()
             or any(not isinstance(gate.get(key), str) or not re.fullmatch(r'[a-f0-9]{64}', gate[key]) for key in ['test_sha256', 'split_sha256'])):
         return 'Не пройдена проверка корпуса и отложенных совпадений'
-    return None
+    return policy_error(gate.get('review_policy'))
 
 
 async def route_version(session, route):
@@ -86,9 +87,27 @@ async def prepare(session, entry_id: int, route, media_dir: str) -> dict:
         raise PreparationError('Для альбома используется только основная карточка с подписью')
     snapshot = await asyncio.to_thread(build_snapshot, items, chat, entry.marked_source_url, media_dir)
     snapshot.update(text_sha256=text_sha256(post.text), route_version_id=version.id,
-                    model_version=job.model_version, run_id=job.current_run_id)
+                    model_version=job.model_version, run_id=job.current_run_id,
+                    review_policy_sha256=route.quality_gate['review_policy']['sha256'])
     snapshot['payload_sha256'] = sha_json(snapshot)
+    if reason := hold_reason(snapshot, route.quality_gate['review_policy']):
+        raise PublicationHold(reason, snapshot)
     return snapshot
+
+
+async def record_hold(session, entry_id, route, issue):
+    """Нет частей отправки: held никогда не подхватывается MAX worker.
+
+    Уникальные ограничения сохраняют первый разбор, повторный опрос не
+    размножает записи. Уже существующая доставка не перезаписывается.
+    """
+    snapshot = issue.snapshot
+    await session.execute(insert(MaxPublicationDelivery).values(
+        entry_id=entry_id, route_id=route.id, channel_id=route.channel_id,
+        source_key=snapshot['source_key'], source_url=snapshot['source_url'],
+        text_sha256=snapshot['text_sha256'], content_sha256=snapshot['content_sha256'],
+        payload_sha256=snapshot['payload_sha256'], snapshot=snapshot,
+        status='held', error=str(issue)).on_conflict_do_nothing())
 
 
 async def enqueue_delivery(session, entry_id: int, route, media_dir: str, batch_id=None, frozen_sha=None):
@@ -151,6 +170,9 @@ async def queue_new(factory, media_dir):
                 try:
                     async with session.begin_nested():
                         await enqueue_delivery(session, entry_id, route, media_dir)
+                except PublicationHold as exc:
+                    async with session.begin_nested():
+                        await record_hold(session, entry_id, route, exc)
                 except PreparationError:
                     # Не совпавший маршрут — обычный исход, не ошибка отправителя.
                     pass

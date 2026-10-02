@@ -12,6 +12,7 @@ from app.publication.max_client import MaxApiError, MaxClient, approved_upload_u
 from app.publication.payload import (PreparationError, build_snapshot, message_parts, receipt_sha256,
                                      split_text, text_units, uploaded_media_matches, verify_message, sha_json)
 from app.publication.service import gate_error
+from app.publication.review_guard import GUARD_VERSION
 from app.web.publication_routes import require_initial_manifest
 from app.taxonomy.artifact import artifact_version, checkpoint_path, file_sha256
 
@@ -101,7 +102,8 @@ def valid_gate():
     route = SimpleNamespace(approved_version_id=1, quality_gate={
         'model_key': 'tfidf', 'expression_sha256': sha_json(version.expression),
         'test_matched': 50, 'test_correct': 45, 'train_positive': 1000,
-        'model_version': 'actual', 'test_sha256': 'a' * 64, 'split_sha256': 'b' * 64})
+        'model_version': 'actual', 'test_sha256': 'a' * 64, 'split_sha256': 'b' * 64,
+        'review_policy': {'version': GUARD_VERSION, 'holds': {}, 'sha256': sha_json({})}})
     return route, version
 
 

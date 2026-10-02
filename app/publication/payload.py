@@ -124,7 +124,7 @@ def build_snapshot(posts, chat, source_url: str, media_dir: str) -> dict:
     key = f'{chat.peer_id}:album:{ordered[0].grouped_id}' if ordered[0].grouped_id else f'{chat.peer_id}:message:{ordered[0].message_id}'
     content = {'text': original, 'links': links, 'media': [{'sha256': m['sha256'], 'type': m['type']} for m in attachments]}
     return {'source_key': key, 'source_url': source_url, 'text': text,
-            'original_text': original, 'media': attachments,
+            'original_text': original, 'original_captions': captions, 'media': attachments,
             'message_ids': [p.message_id for p in ordered], 'content_sha256': sha_json(content),
             'source_fingerprint': source_fingerprint(ordered)}
 

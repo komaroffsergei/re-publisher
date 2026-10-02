@@ -1,5 +1,6 @@
 """Isolated PostgreSQL outbox checks. No MAX sends or production data."""
 from types import SimpleNamespace
+from datetime import timedelta
 
 import httpx
 import pytest
@@ -8,9 +9,10 @@ from sqlalchemy import select, func
 import test_selection_integration as shared
 from app.content.post_preparation import mark_source
 from app.models import (MaxChannel, MaxObservedMessage, MaxPublicationDelivery, MaxPublicationPart, MaxPublicationRoute,
-                        PipelineEntry, TaxonomyClassification, TelegramPost, TelegramChat, SelectionFilterVersion)
+                        PipelineEntry, TaxonomyClassification, TelegramPost, TelegramChat, SelectionFilterVersion, MaxPublicationControl)
 from app.publication.payload import sha_json
-from app.publication.service import enqueue_delivery, record_history, refresh_channel
+from app.publication.service import enqueue_delivery, record_history, refresh_channel, queue_new, prepare
+from app.publication.review_guard import GUARD_VERSION, caption_sha
 from app.publication.worker import process_one, watch_source_changes
 from app.publication.payload import PreparationError
 from app.taxonomy.jobs import text_sha256
@@ -36,7 +38,8 @@ async def ready(factory, client):
         route = MaxPublicationRoute(channel_id=channel.id, mark_id=mark_id, filter_id=rule['id'], enabled=True,
             approved_version_id=version.id, quality_gate={'model_key': 'tfidf',
                 'expression_sha256': sha_json(version.expression), 'test_matched': 50, 'test_correct': 45,
-                'train_positive': 1000, 'model_version': 'qa-v1', 'test_sha256': 'a' * 64, 'split_sha256': 'b' * 64})
+                'train_positive': 1000, 'model_version': 'qa-v1', 'test_sha256': 'a' * 64, 'split_sha256': 'b' * 64,
+                'review_policy': {'version': GUARD_VERSION, 'holds': {}, 'sha256': sha_json({})}})
         session.add(route)
         job = await session.scalar(select(TaxonomyClassification).where(
             TaxonomyClassification.pipeline_entry_id == entry_id, TaxonomyClassification.model_key == 'tfidf'))
@@ -55,6 +58,48 @@ class FakeMax:
         self.sent.append(message)
         return message
     async def get_message(self, mid): return next(m for m in self.sent if m['body']['mid'] == mid)
+
+
+async def test_review_hold_survives_polling_and_never_creates_send_parts(db, client):
+    entry_id, route_id = await ready(db, client)
+    async with db() as session:
+        route = await session.get(MaxPublicationRoute, route_id)
+        holds = {caption_sha('QA sample'): 'Explicit Codex review fixture'}
+        route.quality_gate = {**route.quality_gate, 'review_policy': {
+            'version': GUARD_VERSION, 'holds': holds, 'sha256': sha_json(holds)}}
+        entry = await session.get(PipelineEntry, entry_id)
+        entry.auto_enabled = True
+        session.add(MaxPublicationControl(name='max', automatic_enabled=True,
+            enabled_since=shared.datetime.now(shared.timezone.utc) - timedelta(days=1)))
+        await session.commit()
+    await queue_new(db, '.')
+    await queue_new(db, '.')
+    api = FakeMax()
+    assert not await process_one(db, api, '.')
+    assert not api.sent
+    async with db() as session:
+        assert await session.scalar(select(func.count(MaxPublicationDelivery.id))) == 1
+        delivery = await session.scalar(select(MaxPublicationDelivery))
+        assert delivery.status == 'held' and 'Explicit Codex review' in delivery.error
+        assert await session.scalar(select(func.count(MaxPublicationPart.id))) == 0
+        assert (await session.get(PipelineEntry, entry_id)).stage == 'ready'
+        delivery_id = delivery.id
+    history = (await client.get(f'/api/publication/history?entry_id={entry_id}')).json()
+    assert history['deliveries'][0]['status'] == 'held'
+    assert (await client.post(f'/api/publication/deliveries/{delivery_id}/retry', json={})).status_code == 409
+
+
+async def test_review_policy_change_invalidates_frozen_preview(db, client):
+    entry_id, route_id = await ready(db, client)
+    async with db() as session:
+        route = await session.get(MaxPublicationRoute, route_id)
+        old = await prepare(session, entry_id, route, '.')
+        holds = {caption_sha('A different reviewed post'): 'Needs review'}
+        route.quality_gate = {**route.quality_gate, 'review_policy': {
+            'version': GUARD_VERSION, 'holds': holds, 'sha256': sha_json(holds)}}
+        with pytest.raises(PreparationError, match='после фиксации'):
+            await enqueue_delivery(session, entry_id, route, '.', frozen_sha=old['payload_sha256'])
+        assert await session.scalar(select(func.count(MaxPublicationDelivery.id))) == 0
 
 
 async def test_outbox_sends_once_and_persists_readback(db, client):

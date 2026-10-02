@@ -791,7 +791,7 @@ class MaxPublicationDelivery(TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint('channel_id', 'source_key', name='uq_max_delivery_channel_source'),
         UniqueConstraint('channel_id', 'content_sha256', name='uq_max_delivery_channel_content'),
-        CheckConstraint("status IN ('queued','preparing','sending','verifying','delivered','failed','unknown','stale','cancelled')", name='ck_max_delivery_status'),
+        CheckConstraint("status IN ('queued','preparing','sending','verifying','delivered','failed','unknown','stale','cancelled','held')", name='ck_max_delivery_status'),
         Index('ix_max_delivery_queue', 'status', 'next_attempt_at', 'id'),
     )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)

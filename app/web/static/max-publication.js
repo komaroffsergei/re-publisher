@@ -2,7 +2,7 @@
   const root = document.querySelector('#max-status');
   const detailRoot = document.querySelector('[data-max-deliveries]');
   if (!root && !detailRoot) return;
-  const labels = {queued: 'В очереди', preparing: 'Подготовка', sending: 'Отправляется', verifying: 'Сверка', delivered: 'Доставлено', failed: 'Ошибка', unknown: 'Результат неизвестен', stale: 'Источник изменён', cancelled: 'Отменено', prepared: 'Зафиксирована', running: 'Выполняется', complete: 'Подтверждена'};
+  const labels = {queued: 'В очереди', preparing: 'Подготовка', sending: 'Отправляется', verifying: 'Сверка', delivered: 'Доставлено', failed: 'Ошибка', held: 'Нужен ручной разбор', unknown: 'Результат неизвестен', stale: 'Источник изменён', cancelled: 'Отменено', prepared: 'Зафиксирована', running: 'Выполняется', complete: 'Подтверждена'};
   const access = {unchecked: 'Не проверен', ok: 'Публикация и чтение доступны', denied: 'Бот не подключён или нет прав', error: 'Ошибка проверки'};
   const el = (tag, value, className) => {
     const node = document.createElement(tag);
@@ -89,6 +89,7 @@
       document.querySelector('#max-counts').replaceChildren(...[
         ['В работе', queued], ['Доставлено', counts.delivered || 0],
         ['Ошибки', counts.failed || 0], ['Неизвестный результат', counts.unknown || 0],
+        ['Нужен ручной разбор', counts.held || 0],
       ].map(([name, value]) => {
         const metric = el('div', undefined, 'metric');
         metric.append(el('span', name), el('strong', value));
