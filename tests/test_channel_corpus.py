@@ -175,3 +175,80 @@ def test_training_rechecks_unique_positive_families(tmp_path):
     (tmp_path / 'dataset-manifest.json').write_text(json.dumps({'dataset_sha256': hashlib.sha256(encoded).hexdigest()}))
     with pytest.raises(ValueError, match='positive repeat groups'):
         validate_dataset(tmp_path)
+
+
+def legacy_fixture(tmp_path, monkeypatch, *, context='yes'):
+    import freeze_channel_training as module
+    texts = ['Long compatibility input. ' * 12, 'Unreviewed short reply', 'Another long input. ' * 12]
+    db = seed(tmp_path, texts)
+    db.execute("UPDATE texts SET split='train'")
+    current = json.loads((module.CHECKOUT / 'config/max_taxonomy.json').read_text(encoding='utf-8'))
+    labels, worklist = [], []
+    for i, text in enumerate(texts, 1):
+        labels.append({'id': i, 'needs_review': False, 'yes': ['ai_models', 'is_joke'],
+                       'unclear': [], 'all_other_labels': 'нет', 'taxonomy_version': current['version'],
+                       'text_sha256': hashlib.sha256(text.strip().encode()).hexdigest(), 'technical_complexity': 2})
+        worklist.append({'id': i, 'text': text, 'partition_hint': 'development'})
+    labels_path, worklist_path, audit_path = [tmp_path / name for name in ['old.jsonl', 'work.jsonl', 'audit.json']]
+    for path, rows in [(labels_path, labels), (worklist_path, worklist)]:
+        path.write_text(''.join(json.dumps(r) + '\n' for r in rows), encoding='utf-8')
+    audit = {'accepted': True, 'labels_sha256': hashlib.sha256(labels_path.read_bytes()).hexdigest(),
+             'worklist_sha256': hashlib.sha256(worklist_path.read_bytes()).hexdigest(),
+             'excluded_features': ['is_joke'], 'minimum_unreviewed_characters': 180,
+             'excluded_ids': ['3'], 'reviewed_overrides': {'1': {'labels': {'ai_models': 'unclear'}}},
+             'review_method': 'explicit test fixture', 'individually_rechecked': 1}
+    audit_path.write_text(json.dumps(audit), encoding='utf-8')
+    sha = hashlib.sha256(texts[0].strip().encode()).hexdigest()
+    # Реальная свежая метка должна остаться единственным источником is_joke.
+    fresh = {'sha': sha, 'version': TOPICS['version'], 'provenance': 'codex_agent',
+             'labels': {name: 'no' for name in FEATURES}, 'reasons': {'caption_has_context': 'fixture'}}
+    fresh['labels']['caption_has_context'] = context
+    fresh_path = tmp_path / 'fresh.jsonl'; fresh_path.write_text(json.dumps(fresh) + '\n')
+    record(db, fresh_path)
+    # Квота покрыта отдельными тестами выше; здесь проверяется политика смешивания.
+    monkeypatch.setattr(module, 'positive_group_counts', lambda rows: {'train': {name: 1000 for name in FEATURES}})
+    return db, labels_path, worklist_path, audit_path, audit, sha
+
+
+def test_legacy_audit_scope_preserves_fresh_labels_and_masks_unsafe_reuse(tmp_path, monkeypatch):
+    db, labels, worklist, audit, _, sha = legacy_fixture(tmp_path, monkeypatch)
+    try:
+        manifest = freeze(db, tmp_path / 'frozen', labels, worklist, audit)
+        rows = [json.loads(s) for s in (tmp_path / 'frozen/dataset.jsonl').read_text(encoding='utf-8').splitlines()]
+        assert len(rows) == 1 and rows[0]['sha'] == sha
+        assert rows[0]['labels']['is_joke'] == 'no'
+        assert rows[0]['labels']['ai_models'] == 'unclear'
+        assert rows[0]['complexity'] == 2
+        assert manifest['legacy_compatibility']['rows_reused'] == 1
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize('context', ['no', 'unclear'])
+def test_legacy_labels_do_not_fill_captions_rejected_by_fresh_codex_audit(tmp_path, monkeypatch, context):
+    db, labels, worklist, audit, _, _ = legacy_fixture(tmp_path, monkeypatch, context=context)
+    try:
+        freeze(db, tmp_path / 'frozen', labels, worklist, audit)
+        rows = [json.loads(s) for s in (tmp_path / 'frozen/dataset.jsonl').read_text(encoding='utf-8').splitlines()]
+        assert 'ai_models' not in rows[0]['labels']
+        assert rows[0]['complexity'] is None
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize('violation', ['hash', 'humour_scope', 'implicit_selection'])
+def test_legacy_audit_rejects_changed_inputs_and_unscoped_acceptance(tmp_path, monkeypatch, violation):
+    db, labels, worklist, audit_path, audit, _ = legacy_fixture(tmp_path, monkeypatch)
+    try:
+        if violation == 'hash':
+            worklist.write_text(worklist.read_text() + '\n', encoding='utf-8')
+        elif violation == 'humour_scope':
+            audit['excluded_features'] = []
+        else:
+            audit.pop('minimum_unreviewed_characters')
+        audit_path.write_text(json.dumps(audit), encoding='utf-8')
+        with pytest.raises(ValueError):
+            freeze(db, tmp_path / 'frozen', labels, worklist, audit_path)
+        assert not (tmp_path / 'frozen').exists()
+    finally:
+        db.close()

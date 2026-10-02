@@ -144,14 +144,31 @@ def freeze(db, output, legacy_labels=None, legacy_worklist=None, legacy_audit=No
     if any(r['group_id'] in reserved_groups and r['split'] != 'test' for r in records.values()):
         raise ValueError('Previously reserved holdout material must remain in test')
     if legacy_labels:
-        if not legacy_audit or not json.loads(legacy_audit.read_text(encoding='utf-8')).get('accepted'):
+        audit = json.loads(legacy_audit.read_text(encoding='utf-8')) if legacy_audit else {}
+        if not audit.get('accepted'):
             raise ValueError('Old annotations require a saved Codex audit before reuse')
+        for path, key in [(legacy_labels, 'labels_sha256'), (legacy_worklist, 'worklist_sha256')]:
+            if not path or hashlib.sha256(path.read_bytes()).hexdigest() != audit.get(key):
+                raise ValueError('Legacy audit does not match its frozen inputs')
+        excluded_features = set(audit.get('excluded_features', []))
+        if 'is_joke' not in excluded_features:
+            raise ValueError('Legacy humour labels must not override the fresh caption audit')
+        overrides = audit.get('reviewed_overrides', {})
+        excluded_ids = set(audit.get('excluded_ids', []))
+        min_chars = audit.get('minimum_unreviewed_characters')
+        if not isinstance(min_chars, int) or min_chars < 180:
+            raise ValueError('Legacy reuse needs an explicit conservative input selection')
         worklist = {int(r['id']): r for r in map(json.loads, legacy_worklist.read_text(encoding='utf-8').splitlines()) if r}
+        old_taxonomy = json.loads((CHECKOUT / 'config/max_taxonomy.json').read_text(encoding='utf-8'))
+        old_names = [c['id'] for c in old_taxonomy['categories']]
+        old_names += [s['id'] for c in old_taxonomy['categories'] for s in c['subcategories']]
+        old_names += old_taxonomy['binary_features']
+        if excluded_features - set(old_names):
+            raise ValueError('Unknown legacy feature exclusion')
         accepted = 0
         for label in map(json.loads, legacy_labels.read_text(encoding='utf-8').splitlines()):
-            if label['needs_review']:
+            if label['needs_review'] or str(label['id']) in excluded_ids:
                 continue
-            old_taxonomy = json.loads((CHECKOUT / 'config/max_taxonomy.json').read_text(encoding='utf-8'))
             if label.get('all_other_labels') != 'нет' or label.get('taxonomy_version') != old_taxonomy['version']:
                 raise ValueError('Old label does not explicitly define remaining labels/version')
             source = worklist[int(label['id'])]
@@ -160,13 +177,24 @@ def freeze(db, output, legacy_labels=None, legacy_worklist=None, legacy_audit=No
             if label['text_sha256'] != hashlib.sha256(source['text'].strip().encode()).hexdigest():
                 raise ValueError('Old annotation text changed')
             sha = hashlib.sha256(normalize(source['text']).encode()).hexdigest()
+            # Это отбор уже размеченных человеком/агентом входов, а не
+            # вычисление меток по длине. Сомнительные короткие реплики не
+            # подмешиваются в прежние heads автоматически.
+            if len(normalize(source['text'])) < min_chars and str(label['id']) not in overrides:
+                continue
+            if sha in records and records[sha]['labels'].get('caption_has_context') != 'yes':
+                continue
             row = db.execute('SELECT * FROM texts WHERE sha=?', (sha,)).fetchone()
             if not row or not db.execute('SELECT 1 FROM sources WHERE sha=?', (sha,)).fetchone():
                 continue
-            old_names = [c['id'] for c in taxonomy()['categories']]
-            old_names += [s['id'] for c in taxonomy()['categories'] for s in c['subcategories']]
-            old_names += json.loads((CHECKOUT / 'config/max_taxonomy.json').read_text(encoding='utf-8'))['binary_features']
-            values = {name: 'yes' if name in label['yes'] else 'unclear' if name in label['unclear'] else 'no' for name in old_names}
+            values = {name: 'yes' if name in label['yes'] else 'unclear' if name in label['unclear'] else 'no'
+                      for name in old_names if name not in excluded_features}
+            override = overrides.get(str(label['id']), {})
+            for name, value in override.get('labels', {}).items():
+                if name not in old_names or value not in {'yes', 'no', 'unclear'}:
+                    raise ValueError('Invalid explicit Codex legacy correction')
+                if name not in excluded_features:
+                    values[name] = value
             if sha not in records:
                 source_rows = list(db.execute('SELECT * FROM sources WHERE sha=?', (sha,)))
                 records[sha] = {'sha': sha, 'text': row['text'], 'group_id': row['group_id'], 'split': row['split'],
@@ -177,7 +205,7 @@ def freeze(db, output, legacy_labels=None, legacy_worklist=None, legacy_audit=No
             # признаки остаются неизвестными, а не отрицательными.
             for name, value in values.items():
                 records[sha]['labels'].setdefault(name, value)
-            records[sha]['complexity'] = label.get('technical_complexity')
+            records[sha]['complexity'] = override.get('technical_complexity', label.get('technical_complexity'))
             accepted += 1
     counts = defaultdict(Counter)
     groups = defaultdict(set)
@@ -203,6 +231,13 @@ def freeze(db, output, legacy_labels=None, legacy_worklist=None, legacy_audit=No
         'rows': len(result), 'positive_by_split': dict(counts), 'positive_groups_by_split': group_counts,
         'annotation': 'Codex; agreement with agent, not independent human accuracy',
         'split_seed': 20261001, 'repeat_group_overlap': 0, 'input': 'text_only'}
+    if legacy_labels:
+        manifest['legacy_compatibility'] = {'rows_reused': accepted,
+            'audit_sha256': hashlib.sha256(legacy_audit.read_bytes()).hexdigest(),
+            'excluded_features': sorted(excluded_features),
+            'review_method': audit.get('review_method'),
+            'individually_rechecked': audit.get('individually_rechecked'),
+            'limitations': audit.get('limitations')}
     (output / 'dataset-manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
     return manifest
 

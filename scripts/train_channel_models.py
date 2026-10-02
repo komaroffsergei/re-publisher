@@ -134,6 +134,8 @@ def tfidf(train, validation, names, taxonomy_version, output):
         model.fit(x[indices], target)
         models[name] = model
         scores[:, index] = model.predict_proba(v)[:, 1]
+        print(json.dumps({'phase': 'tfidf', 'head': name, 'known': len(target),
+                          'positive': int(target.sum())}), flush=True)
     complexity_indices = [i for i, r in enumerate(train) if isinstance(r.get('complexity'), int)]
     if not complexity_indices:
         raise ValueError('Technical complexity annotations missing')
@@ -173,16 +175,29 @@ def minilm(train, validation, names, taxonomy_version, encoder_path, output, epo
     train_loader = DataLoader(Data(train), batch_size=8, shuffle=True, collate_fn=collate)
     validation_loader = DataLoader(Data(validation), batch_size=8, collate_fn=collate)
     optimizer = torch.optim.AdamW(model.parameters(), lr=2e-5, weight_decay=.01)
+    # Признаки встречаются с разной частотой. Вес считается только по train;
+    # неясные/отсутствующие метки не увеличивают число отрицательных примеров.
+    positive_weights = []
+    for name in names:
+        _, target = known(train, name)
+        positive_weights.append(min(10., max(1., (len(target) - target.sum()) / max(1, target.sum()))))
+    positive_weights = torch.tensor(positive_weights, dtype=torch.float32)
     best_f1, best, history = -1, None, []
     for epoch in range(1, epochs + 1):
         model.train()
-        for inputs, targets, masks, complexity in train_loader:
+        epoch_start = time.perf_counter()
+        for step, (inputs, targets, masks, complexity) in enumerate(train_loader, 1):
             optimizer.zero_grad()
             logits, comp = model(inputs)
-            loss = (torch.nn.functional.binary_cross_entropy_with_logits(logits, targets, reduction='none') * masks).sum() / masks.sum().clamp(min=1)
+            loss = (torch.nn.functional.binary_cross_entropy_with_logits(
+                logits, targets, reduction='none', pos_weight=positive_weights) * masks).sum() / masks.sum().clamp(min=1)
             valid = complexity >= 0
             if valid.any(): loss = loss + .1 * torch.nn.functional.mse_loss(comp[valid], complexity[valid])
             loss.backward(); torch.nn.utils.clip_grad_norm_(model.parameters(), 1.); optimizer.step()
+            if step == 1 or step % 100 == 0:
+                print(json.dumps({'phase': 'minilm', 'epoch': epoch, 'step': step,
+                                  'steps': len(train_loader), 'seconds': round(time.perf_counter() - epoch_start, 1),
+                                  'masked_loss': round(float(loss.detach()), 5)}), flush=True)
         model.eval(); raw = []
         with torch.inference_mode():
             for inputs, _, _, _ in validation_loader:
@@ -190,7 +205,8 @@ def minilm(train, validation, names, taxonomy_version, encoder_path, output, epo
         raw = np.asarray(raw)
         report = score_report(raw, validation, names)
         topic_f1 = float(np.mean([report[t['id']].get('f1', 0) for t in TOPICS['topics']]))
-        history.append({'epoch': epoch, 'validation_macro_f1': topic_f1})
+        history.append({'epoch': epoch, 'validation_macro_f1': topic_f1,
+                        'seconds': round(time.perf_counter() - epoch_start, 1)})
         if topic_f1 > best_f1:
             best_f1, best = topic_f1, raw
             save_file(model.state_dict(), str(output / 'best.safetensors'))
@@ -200,6 +216,7 @@ def minilm(train, validation, names, taxonomy_version, encoder_path, output, epo
     training = {'taxonomy_version': taxonomy_version, 'names': names, 'max_length': max_length,
                 'best_checkpoint': 'best.safetensors', 'best_epoch': best_epoch, 'history': history,
                 'calibration': parameters, 'device': 'cpu', 'validation_selection': 'macro F1 of nine topics'}
+    training['positive_weights_from_train'] = dict(zip(names, positive_weights.tolist(), strict=True))
     (output / 'training.json').write_text(json.dumps(training, indent=2), encoding='utf-8')
     return calibrate(best, names, parameters)
 
