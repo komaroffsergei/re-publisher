@@ -90,6 +90,13 @@ async def advance(session, entry, post, chat, versions, settings):
         return
     for key, profile in required:
         job = jobs.get(job_key(key, profile))
+        if job and profile == "humor_ocr" and job.status == "failed":
+            from app.ocr.models import OcrJob
+            ocr_job = await session.get(OcrJob, entry.id)
+            if ocr_job and ocr_job.status == "failed":
+                failure(entry, "ocr", ocr_job.error or "OCR остановлен после повторов")
+                entry.auto_state = "stopped"
+                return
         if job and profile == "humor_ocr" and job.status in {"complete", "media_only", "empty"}:
             from app.ocr.jobs import classification_input_current
             if not await classification_input_current(session, post, job, settings):

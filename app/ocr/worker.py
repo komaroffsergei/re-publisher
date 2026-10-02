@@ -77,7 +77,7 @@ async def claim(factory):
     now = datetime.now(timezone.utc)
     async with factory() as session:
         async with session.begin():
-            job = (await session.execute(select(OcrJob).where(OcrJob.status == "queued",
+            job = (await session.execute(select(OcrJob).where(OcrJob.status.in_(("queued", "waiting_media")),
                 (OcrJob.retry_at.is_(None) | (OcrJob.retry_at <= now)))
                 .order_by(OcrJob.entry_id).with_for_update(skip_locked=True).limit(1))).scalar_one_or_none()
             if not job:
@@ -146,12 +146,15 @@ async def process(factory, settings, reader, entry_id, run_id):
                 elif job.status != "queued":
                     classification.status = "needs_review" if status == "needs_review" else "failed"
                     classification.error = error or "OCR требует ручного разбора"
+                    classification.finished_at = now
                 classification_run = await session.get(TaxonomyRun, classification.current_run_id)
                 if classification_run:
                     classification_run.status = classification.status
                     classification_run.error = classification.error
                     classification_run.input_sha256 = classification.input_sha256
                     classification_run.ocr_run_id = classification.ocr_run_id
+                    if classification.status in {"failed", "needs_review"}:
+                        classification_run.finished_at = now
             if entry.auto_enabled and entry.auto_state != "done":
                 entry.auto_retry_at = None
 
@@ -178,9 +181,11 @@ async def run():
             if claimed:
                 await process(factory, settings, reader, *claimed)
             else:
-                # Ожидание медиа/сборки альбома не расходует попытки OCR.
+                # Изменённый вход уже запрошенной карточки подготавливается
+                # заново. Постоянно недоступное медиа проходит ограниченные
+                # повторы, а не остаётся в waiting_media навсегда.
                 async with factory() as session:
-                    pending = list((await session.execute(select(OcrJob).where(OcrJob.status.in_(("waiting_media", "stale"))).limit(20))).scalars())
+                    pending = list((await session.execute(select(OcrJob).where(OcrJob.status == "stale").limit(20))).scalars())
                     from app.ocr.jobs import enqueue_ocr
                     for job in pending:
                         entry = await session.get(PipelineEntry, job.entry_id)

@@ -165,7 +165,8 @@ def main():
     policy = json.loads(policy_path.read_text(encoding="utf-8"))
     albums = {(r["peer"], r["grouped_id"]): r["members"] for r in policy["albums"]}
     reserved = {tuple(r) for r in policy["reserved_sources"]}
-    paths = [p for p in sorted(args.directory.glob("ocr-*.jsonl")) if re.fullmatch(r"ocr--?\d+-\d{3}\.jsonl", p.name)]
+    ocr_directory = args.directory / policy.get("ocr_directory", ".")
+    paths = [p for p in sorted(ocr_directory.glob("ocr-*.jsonl")) if re.fullmatch(r"ocr--?\d+-\d{3}\.jsonl", p.name)]
     rows, excluded = assemble(paths, sorted(args.directory.glob("codex-annotations-*.jsonl")), albums, reserved)
     rows = partition(rows, list(read_rows([args.directory / "codex-repeat-groups.jsonl"])) if (args.directory / "codex-repeat-groups.jsonl").exists() else [])
     from tokenizers import Tokenizer

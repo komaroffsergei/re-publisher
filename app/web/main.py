@@ -452,6 +452,11 @@ def register_routes(app: FastAPI) -> None:
                     item.media_download_status = "pending"
             reset_retry(entry)
             entry.auto_state = "pending"
+            from app.ocr.models import OcrJob
+            ocr_job = await session.get(OcrJob, entry.id)
+            if ocr_job and ocr_job.status == "failed":
+                from app.ocr.jobs import enqueue_ocr
+                await enqueue_ocr(session, entry, post, request.app.state.settings, retry=True)
             await session.commit()
             return {"status": "pending"}
 

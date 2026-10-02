@@ -93,6 +93,11 @@ async def readiness_error(session, entry, post, media_dir):
     # Даём коротким альбомным событиям собраться; это защита от неполной группы,
     # а не искусственная задержка стадий.
     posts = await album_posts(session, post)
+    if post.grouped_id and (await session.execute(select(TelegramPost.id).where(
+        TelegramPost.chat_peer_id == post.chat_peer_id,
+        TelegramPost.grouped_id == post.grouped_id,
+        TelegramPost.is_deleted.is_(True)).limit(1))).scalar_one_or_none():
+        return "В альбоме удалено сообщение; нужна ручная проверка состава"
     if post.grouped_id and any(
         (datetime.now(timezone.utc) - p.updated_at).total_seconds() < 5 for p in posts
     ):

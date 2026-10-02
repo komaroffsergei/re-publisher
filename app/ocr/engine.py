@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -16,7 +17,7 @@ from PIL import Image, ImageOps
 CONTRACT = "caption_ocr_v1"
 MAX_PIXELS = 16_000_000
 MIN_SCORE = 0.5
-PREPROCESSING_VERSION = "bilingual-lines-v2"
+PREPROCESSING_VERSION = "bilingual-regions-v3"
 
 
 def engine_version(directory: str | Path):
@@ -29,6 +30,19 @@ def file_digest(path: Path) -> str:
         for part in iter(lambda: source.read(1024 * 1024), b""):
             digest.update(part)
     return digest.hexdigest()
+
+
+@lru_cache(maxsize=1024)
+def _media_digest(path: str, size: int, mtime_ns: int, ctime_ns: int, inode: int) -> str:
+    # Загрузчик заменяет файлы атомарно. Статистика файла входит в ключ;
+    # проверка доски не перечитывает большое видео каждые пять секунд.
+    return file_digest(Path(path))
+
+
+def media_digest(path: Path) -> str:
+    resolved = path.resolve()
+    stat = resolved.stat()
+    return _media_digest(str(resolved), stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino)
 
 
 def normalized(value: str) -> str:
@@ -114,6 +128,8 @@ class OcrEngine:
                         for key, language in (("ru", LangRec.CYRILLIC), ("en", LangRec.EN))]
 
     def read(self, path: str | Path) -> dict:
+        from rapidocr.main import RapidOCRError
+        from rapidocr.utils.process_img import map_boxes_to_original
         path = Path(path)
         started = time.perf_counter()
         with Image.open(path) as image:
@@ -121,27 +137,37 @@ class OcrEngine:
                 raise ValueError("Image exceeds OCR pixel budget")
             image.seek(0)
             image = ImageOps.exif_transpose(image).convert("RGB")
-            # RapidOCR принимает OpenCV-массив BGR; Pillow выдаёт RGB.
             pixels = np.asarray(image)[:, :, ::-1].copy()
+        # Детектор и поворот строк одинаковы для RU/EN. Повторный запуск
+        # детектора раньше только тратил CPU. Сохраняем все найденные регионы.
+        reader = self.readers[0]
+        image, record = reader.preprocess_img(pixels)
         blocks = []
-        for reader in self.readers:
-            result = reader(pixels)
-            if result.txts is None:
-                continue
-            for text, score, box in zip(result.txts, result.scores, result.boxes, strict=True):
+        try:
+            cropped, detection = reader.detect_and_crop(image, record)
+        except RapidOCRError:
+            cropped = []
+        if cropped:
+            rotated, _ = reader.cls_and_rotate(cropped)
+            ru = reader.recognize_txt(rotated)
+            # В прежнем объединении кириллица всегда оставалась от RU.
+            # EN запускается только для оставшихся регионов; это выбор
+            # распознавания букв, а не определение темы или юмора.
+            selected = [i for i, text in enumerate(ru.txts)
+                        if not any("А" <= c <= "я" or c in "Ёё" for c in text)]
+            english = {}
+            if selected:
+                result = self.readers[1].recognize_txt([rotated[i] for i in selected])
+                english = {i: (text, float(score)) for i, text, score
+                           in zip(selected, result.txts, result.scores, strict=True)}
+            boxes = map_boxes_to_original(detection.boxes.copy(), record, *pixels.shape[:2])
+            for i, (text, score, box) in enumerate(zip(ru.txts, ru.scores, boxes, strict=True)):
+                if i in english and english[i][1] > float(score):
+                    text, score = english[i]
                 text = normalized(str(text))
-                if not text:
-                    continue
-                candidate = {"text": text, "score": round(float(score), 5),
-                             "box": np.asarray(box).round(2).tolist()}
-                existing = next((item for item in blocks if same_box(item["box"], candidate["box"])), None)
-                if existing is None:
-                    blocks.append(candidate)
-                # Английский recognizer иногда уверенно читает «не» как He.
-                # Кириллицу оставляем от соответствующего recognizer; это
-                # выбор чтения букв, а не тематическая разметка поста.
-                elif not any("А" <= c <= "я" or c in "Ёё" for c in existing["text"]) and candidate["score"] > existing["score"]:
-                    existing.update(candidate)
+                if text:
+                    blocks.append({"text": text, "score": round(float(score), 5),
+                                   "box": np.asarray(box).round(2).tolist()})
         blocks = reading_order(blocks)
         weak = [item for item in blocks if item["score"] < MIN_SCORE and len(item["text"]) >= 3]
         return {"status": "needs_review" if weak else "complete" if blocks else "no_text",

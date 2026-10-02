@@ -7,7 +7,7 @@ from sqlalchemy import select
 from fastapi import HTTPException
 from app.models import PipelineEntry, TelegramPost
 from app.ocr.models import OcrJob, OcrRun
-from app.ocr.engine import compose_input, file_digest, input_digest, engine_version
+from app.ocr.engine import compose_input, media_digest, input_digest, engine_version
 from app.ocr.media import safe_path
 
 TERMINAL = {"complete", "no_text", "needs_review", "failed"}
@@ -17,11 +17,26 @@ async def snapshot(session, post, settings):
     # Импорт внутри функции устраняет зависимость taxonomy -> OCR -> taxonomy.
     from app.content.post_preparation import album_posts
     posts = await album_posts(session, post)
-    inputs, error = [], None
+    inputs, provenance, error = [], [], None
     long_caption = len((post.text or "").strip()) > settings.ocr_caption_max_chars
+    # Идентичное превью не делает заменённое видео прежним вложением.
+    # В отпечатке учитываем все оригиналы, включая не используемые OCR.
+    for item in posts:
+        original = safe_path(item.media_path, settings.media_dir)
+        raw_media = (item.raw or {}).get("media") or {}
+        media_object = raw_media.get("photo") or raw_media.get("document") or {}
+        provenance.append({"message_id": item.message_id, "type": item.media_type,
+            "identity": media_object.get("id"), "status": item.media_download_status,
+            "original_sha256": media_digest(original) if original else None})
+    deleted = bool(post.grouped_id and (await session.execute(select(TelegramPost.id).where(
+        TelegramPost.chat_peer_id == post.chat_peer_id,
+        TelegramPost.grouped_id == post.grouped_id,
+        TelegramPost.is_deleted.is_(True)).limit(1))).scalar_one_or_none())
+    if deleted:
+        error = "В альбоме удалено сообщение; нужен ручной разбор состава"
     if not long_caption:
         now = datetime.now(timezone.utc)
-        if post.grouped_id and any(p.updated_at and (now - p.updated_at).total_seconds() < 5 for p in posts):
+        if not deleted and post.grouped_id and any(p.updated_at and (now - p.updated_at).total_seconds() < 5 for p in posts):
             error = "Альбом ещё собирается"
         for item in posts:
             if not item.media_type:
@@ -41,10 +56,10 @@ async def snapshot(session, post, settings):
             inputs.append({"post_id": item.id, "message_id": item.message_id,
                 "kind": "video_frame" if video and not preview else "image",
                 "path": str(selected) if selected else None,
-                "sha256": file_digest(selected) if selected else None,
+                "sha256": media_digest(selected) if selected else None,
                 "original_status": item.media_download_status,
                 "preview_status": item.ocr_preview_status if video else None})
-    data = {"caption": (post.text or "").strip(), "inputs": inputs, "error": error,
+    data = {"caption": (post.text or "").strip(), "inputs": inputs, "media": provenance, "error": error,
             "contract": "caption_ocr_v1", "long_caption": long_caption,
             "engine_version": engine_version(settings.ocr_model_dir) if settings.ocr_enabled else "disabled"}
     source_sha = hashlib.sha256(json.dumps(data, sort_keys=True, ensure_ascii=False).encode()).hexdigest()

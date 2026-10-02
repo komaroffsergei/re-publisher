@@ -40,3 +40,16 @@ def test_tilted_words_keep_left_to_right_reading_order():
         {"text": "слева", "box": [[0, 2], [40, 2], [40, 22], [0, 22]]},
         {"text": "потом", "box": [[0, 40], [40, 40], [40, 60], [0, 60]]}]
     assert [b["text"] for b in reading_order(blocks)] == ["слева", "справа", "потом"]
+
+
+def test_media_hash_cache_detects_atomic_replacement(tmp_path):
+    from app.ocr.engine import media_digest, file_digest
+    path = tmp_path / "video.bin"
+    path.write_bytes(b"first")
+    previous = media_digest(path)
+    assert previous == file_digest(path)
+    replacement = tmp_path / "replacement.bin"
+    replacement.write_bytes(b"other")
+    replacement.replace(path)
+    assert media_digest(path) != previous
+    assert media_digest(path) == file_digest(path)

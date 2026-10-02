@@ -140,3 +140,79 @@ async def test_media_changed_outside_collector_cannot_pass_filter_or_readiness(d
         entry.marked_source_url = "https://t.me/example/1"
         entry.marked_text_sha256 = text_sha256(post.text)
         assert "OCR" in await readiness_error(session, entry, post, settings.media_dir)
+
+
+async def test_unchanged_video_preview_does_not_hide_changed_original(db, client, tmp_path):
+    from app.ocr.jobs import snapshot
+    entry_id = await shared.seed(db)
+    settings = configure(tmp_path)
+    await media_post(db, entry_id, settings)
+    Path(settings.ocr_preview_dir).mkdir()
+    async with db() as session:
+        entry = await session.get(PipelineEntry, entry_id)
+        post = await session.get(TelegramPost, entry.source_post_id)
+        preview = Path(settings.ocr_preview_dir) / "preview.jpg"
+        preview.write_bytes(b"unchanged preview")
+        post.media_type = "MessageMediaDocument"
+        post.raw = {"media":{"document":{"id":123, "mime_type":"video/mp4"}}}
+        post.ocr_preview_path, post.ocr_preview_status = str(preview), "downloaded"
+        first = (await snapshot(session, post, settings))[0]
+        Path(post.media_path).write_bytes(b"replacement original")
+        assert (await snapshot(session, post, settings))[0] != first
+
+
+async def test_missing_media_stops_after_bounded_retries_and_allows_explicit_retry(db, client, tmp_path):
+    entry_id = await shared.seed(db)
+    settings = configure(tmp_path)
+    await media_post(db, entry_id, settings)
+    async with db() as session:
+        entry = await session.get(PipelineEntry, entry_id)
+        post = await session.get(TelegramPost, entry.source_post_id)
+        Path(post.media_path).unlink()
+        await enqueue(session, entry_id, "tfidf", "humor_ocr")
+        await session.commit()
+    for attempt, delay in enumerate((10, 30, 120, None), 1):
+        picked = await claim(db)
+        assert picked is not None
+        await process(db, settings, Reader(), *picked)
+        async with db() as session:
+            job = await session.get(OcrJob, entry_id)
+            assert job.attempts == attempt
+            if delay:
+                assert job.status == "queued"
+                assert delay - 3 <= (job.retry_at - datetime.now(timezone.utc)).total_seconds() <= delay
+                job.retry_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+                await session.commit()
+            else:
+                assert job.status == "failed"
+                classification = (await session.execute(select(TaxonomyClassification).where(
+                    TaxonomyClassification.pipeline_entry_id == entry_id,
+                    TaxonomyClassification.profile == "humor_ocr"))).scalar_one()
+                assert classification.status == "failed" and classification.finished_at
+                entry = await session.get(PipelineEntry, entry_id)
+                entry.auto_enabled, entry.auto_state = True, "stopped"
+                await session.commit()
+    assert await claim(db) is None
+    response = await client.post(f"/api/pipeline/{entry_id}/automation/retry", json={})
+    assert response.status_code == 200
+    async with db() as session:
+        assert (await session.get(OcrJob, entry_id)).attempts == 0
+
+
+async def test_deleted_album_member_blocks_ocr_and_ready(db, client, tmp_path):
+    from app.ocr.jobs import snapshot
+    from app.content.post_preparation import readiness_error
+    from app.taxonomy.jobs import text_sha256
+    entry_id = await shared.seed(db)
+    settings = configure(tmp_path)
+    await media_post(db, entry_id, settings)
+    async with db() as session:
+        entry = await session.get(PipelineEntry, entry_id)
+        post = await session.get(TelegramPost, entry.source_post_id)
+        post.grouped_id = 999
+        session.add(TelegramPost(chat_peer_id=post.chat_peer_id, message_id=2,
+            grouped_id=999, text=None, date=datetime.now(timezone.utc), is_deleted=True, raw={}))
+        await session.flush()
+        assert "удалено" in (await snapshot(session, post, settings))[2]
+        entry.marked_source_url, entry.marked_text_sha256 = "https://t.me/example/1", text_sha256(post.text)
+        assert "удалено" in await readiness_error(session, entry, post, settings.media_dir)
