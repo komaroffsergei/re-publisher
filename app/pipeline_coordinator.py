@@ -53,6 +53,10 @@ def failure(entry, phase, error, transient=False):
 
 
 async def advance(session, entry, post, chat, versions, settings):
+    # Ручной OCR доступен раньше автоматического отбора. Допуск выставляется
+    # отдельно после проверки корпуса, качества и ресурсов, не из интерфейса.
+    versions = [v for v in versions if profile_of(v) != "humor_ocr"
+                or settings.humor_auto_enabled]
     now = datetime.now(timezone.utc)
     if post.is_deleted:
         entry.auto_state = "stopped"

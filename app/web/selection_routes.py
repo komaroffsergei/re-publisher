@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.content.selection_filters import load_states, preview, remove_mark, trace_text
 from app.content.selection_rules import taxonomy_catalog, validate_expression
+from app.config import get_settings
 from app.models import (FilterApplication, FilterEvaluation, FilterMark, FilterMarkEvent, PipelineEntry, PostFilterMark,
                         SelectionFilter, SelectionFilterVersion, TaxonomyClassification, TelegramChat, TelegramPost)
 
@@ -84,6 +85,11 @@ async def check_mark(session, draft):
     mark = await session.get(FilterMark, draft.mark_id)
     if mark is None or (mark.archived and draft.enabled):
         raise HTTPException(409, "Выберите действующий признак из словаря")
+
+
+def check_automatic_profile(draft, settings):
+    if draft.enabled and draft.profile == "humor_ocr" and not settings.humor_auto_enabled:
+        raise HTTPException(409, "Автоматический отбор юмора ещё не допущен. Сохраните фильтр выключенным; ручная проверка и предпросмотр доступны.")
 
 
 async def enqueue_application(session, version):
@@ -177,6 +183,7 @@ def register_filter_routes(app, require_auth, session_factory, templates):
     @router.post("/api/pipeline/filters/apply")
     async def apply_filter(request: Request):
         draft = await input_data(request, FilterInput)
+        check_automatic_profile(draft, get_settings())
         if draft.preview_digest != digest(draft):
             raise HTTPException(409, "Сначала обновите предпросмотр этих условий")
         async with session_factory(request)() as session:

@@ -9,10 +9,26 @@ from app.taxonomy.jobs import text_sha256
 from app.taxonomy.profiles import job_key
 from app.ocr.media import static_thumbnail, safe_path
 from app.web.selection_routes import FilterInput
+from app.web.selection_routes import check_automatic_profile
+from fastapi import HTTPException
 
 
 def condition(label="is_joke"):
     return {"op": "condition", "label_id": label, "compare": "gte", "threshold": 92}
+
+
+def test_manual_experiment_cannot_enable_automatic_humor_filter():
+    settings = SimpleNamespace(humor_auto_enabled=False)
+    draft = FilterInput(name="Юмор", mark_id=44, expression=condition(), profile="humor_ocr")
+    with pytest.raises(HTTPException) as exc:
+        check_automatic_profile(draft, settings)
+    assert exc.value.status_code == 409
+    draft.enabled = False
+    check_automatic_profile(draft, settings)
+    draft.enabled, draft.profile = True, "taxonomy"
+    check_automatic_profile(draft, settings)
+    draft.profile = "humor_ocr"
+    check_automatic_profile(draft, SimpleNamespace(humor_auto_enabled=True))
 
 
 def test_humor_only_exposes_two_actual_scores():
