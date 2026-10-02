@@ -29,3 +29,21 @@ def test_unclear_labels_low_confidence_and_incomplete_albums_do_not_fill_quota()
             (True,"да","да"), (True,"неясно","да"), (True,"да","неясно"), (False,"да","да"), (True,"нет","да")])]
     count = corpus.coverage(rows)["train"]
     assert count["positive"] == 1 and count["negative"] == 1
+
+
+def test_long_caption_has_same_text_only_input_as_runtime(tmp_path):
+    from app.ocr.engine import compose_input,input_digest
+    caption = "а" * 501
+    row = {"peer":1,"message":2,"grouped_id":None,"date":"2026-10-03", "caption":caption,
+        "media_sha256":"image-one","ocr":{"status":"no_text","blocks":[],"engine_version":"fixture"}}
+    raw, labels = tmp_path / "ocr.jsonl", tmp_path / "labels.jsonl"
+    raw.write_text(json.dumps(row),encoding="utf-8")
+    labels.write_text(json.dumps({"peer":1,"message":2,"input_sha256":input_digest(caption,[]),
+        "is_joke":"нет","input_has_context":"да","reason":"fixture", "annotator":"Codex /root"}),encoding="utf-8")
+    assembled, excluded = corpus.assemble([raw],[labels])
+    assert not excluded
+    assert assembled[0]["text"] == compose_input(caption,[])
+    assert assembled[0]["ocr_eligible"]
+    row["media_sha256"] = None
+    raw.write_text(json.dumps(row),encoding="utf-8")
+    assert not corpus.assemble([raw],[labels])[0][0]["ocr_eligible"]

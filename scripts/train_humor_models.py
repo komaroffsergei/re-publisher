@@ -6,6 +6,7 @@ TF-IDF, MiniLM и контроль без OCR используют одни гр
 from __future__ import annotations
 import argparse
 import gc
+import importlib.metadata
 import hashlib
 import json
 import random
@@ -104,7 +105,7 @@ def tfidf(train, validation, output, caption_only=False):
     for col,name in enumerate(NAMES):
         ix,target = known(train,name)
         if len(set(target))!=2: raise ValueError("Не хватает обоих классов: " + name)
-        model = LogisticRegression(C=2,class_weight="balanced",max_iter=2000,solver="liblinear")
+        model = LogisticRegression(C=2,class_weight="balanced",max_iter=2000,solver="liblinear",random_state=20261003)
         model.fit(x[ix],target);models[name]=model;scores[:,col]=model.predict_proba(v)[:,1]
     bundle = {"word":word,"char":char,"models":models,"label_names":list(NAMES),"taxonomy_version":CONFIG["version"]}
     joblib.dump(bundle,output)
@@ -162,7 +163,12 @@ def minilm(train, validation, encoder_path, output):
     metadata={"taxonomy_version":CONFIG["version"],"names":list(NAMES),"max_length":512,
         "best_checkpoint":"best.safetensors","best_epoch":best_epoch,"epochs":4,"batch_size":8,
         "device":"cpu","validation_selection":"macro F1 at fixed 0.5","history":history,
-        "positive_weights_from_train":dict(zip(NAMES,weights.tolist()))}
+        "positive_weights_from_train":dict(zip(NAMES,weights.tolist())),
+        "optimizer":{"name":"AdamW","learning_rate":2e-5,"weight_decay":.01,"gradient_clip":1.},
+        "encoder_snapshot":encoder_path.name,
+        "encoder_files_sha256":{f.name:file_sha256(f) for f in sorted(encoder_path.iterdir())
+                                if f.is_file() and f.suffix in {'.json','.bin','.safetensors'}},
+        "seed":20261003}
     (output/"training.json").write_text(json.dumps(metadata,indent=2),encoding="utf-8")
     return best_scores
 
@@ -194,7 +200,10 @@ def main():
         checksum=file_sha256(path);identity=hashlib.sha256(json.dumps({"weights":checksum,"auxiliary":auxiliary},sort_keys=True).encode()).hexdigest()[:12]
         models[key]={"version":f"humor-ocr-v1-{key}-{identity}","weights_sha256":checksum,"auxiliary_sha256":auxiliary,
             "path":"baseline.joblib" if key=="tfidf" else "minilm-humor"}
-    (args.output/"model-manifest.json").write_text(json.dumps({"models":models,"dataset_sha256":manifest["dataset_sha256"],"profile":"humor_ocr","contract":CONTRACT},indent=2))
+    (args.output/"model-manifest.json").write_text(json.dumps({"models":models,"dataset_sha256":manifest["dataset_sha256"],"profile":"humor_ocr","contract":CONTRACT,
+        "training_script_sha256":file_sha256(Path(__file__)),
+        "packages":{name:importlib.metadata.version(name) for name in ('torch','transformers','tokenizers','scikit-learn','numpy','scipy','safetensors','joblib')},
+        "tfidf":{"word_ngrams":[1,2],"character_ngrams":[3,5],"min_document_frequency":2,"C":2,"class_weight":"balanced","seed":20261003}},indent=2))
     candidates=[(key,route(values,validation)) for key,values in scores.items() if key!='caption_only']
     candidates=[(key,r) for key,r in candidates if r]
     choice=max(candidates,key=lambda item:(item[1]["recall"],item[1]["precision"],item[0]=='tfidf')) if candidates else None

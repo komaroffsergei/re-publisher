@@ -57,7 +57,9 @@ def assemble(ocr_paths, annotation_paths, known_album_members=None, reserved_sou
         if any((r["peer"], r["message"]) in reserved_sources for r in items):
             excluded["reserved_source"] += 1
             continue
-        results = [r["ocr"] for r in items]
+        # Production использует длинную подпись без OCR. Не обучаем на
+        # надписях, которые этот же профиль не увидит на сайте.
+        results = [] if len(primary["caption"].strip()) > 500 else [r["ocr"] for r in items]
         text = compose_input(primary["caption"], results)
         fingerprint = input_digest(primary["caption"], results)
         annotation = labels.get((primary["peer"], primary["message"], fingerprint))
@@ -68,10 +70,11 @@ def assemble(ocr_paths, annotation_paths, known_album_members=None, reserved_sou
             "media": [r.get("media_sha256") for r in items], "text": text}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         output.append({"sha": sha, "input_sha256": fingerprint, "caption": primary["caption"], "text": text,
             "sources": [{"peer": r["peer"], "message": r["message"], "date": r["date"]} for r in items],
-            "media_sha256": [r.get("media_sha256") for r in items], "ocr_version": results[0].get("engine_version"),
+            "media_sha256": [r.get("media_sha256") for r in items], "ocr_version": items[0]["ocr"].get("engine_version"),
             "labels": {name: annotation[name] for name in NAMES}, "reason": annotation["reason"],
             "provenance": "codex_agent", "complete_album": complete_album,
-            "ocr_eligible": complete_album and all(r.get("status") in {"complete", "no_text"} for r in results),
+            "ocr_eligible": complete_album and all(r["ocr"].get("status") in {"complete", "no_text"}
+                                                   and r.get("media_sha256") for r in items),
             "caption_length": len(primary["caption"].strip())})
     return output, dict(excluded)
 
