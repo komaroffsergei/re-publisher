@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from channel_corpus import FEATURES, TOPICS, connect, import_snapshot, next_batch, record
+from channel_corpus import FEATURES, TOPICS, connect, coverage, import_snapshot, next_batch, positive_group_counts, record
 from freeze_channel_training import freeze, group_and_split, split_for
 from train_channel_models import known, validate_dataset
 
@@ -131,3 +131,47 @@ def test_frozen_dataset_changes_are_rejected(tmp_path):
     (tmp_path / 'dataset.jsonl').write_bytes(b'changed')
     (tmp_path / 'dataset-manifest.json').write_text(json.dumps({'dataset_sha256': hashlib.sha256(b'original').hexdigest()}))
     with pytest.raises(ValueError, match='changed after freezing'): validate_dataset(tmp_path)
+
+
+def test_quota_counts_repeat_families_and_requires_caption_context():
+    rows = [
+        {'split': 'train', 'group_id': 'one', 'labels': {'is_joke': 'yes', 'caption_has_context': 'yes'}},
+        {'split': 'train', 'group_id': 'one', 'labels': {'is_joke': 'yes', 'caption_has_context': 'yes'}},
+        {'split': 'train', 'group_id': 'two', 'labels': {'is_joke': 'yes', 'caption_has_context': 'unclear'}},
+        {'split': 'validation', 'group_id': 'three', 'labels': {'is_joke': 'yes', 'caption_has_context': 'yes'}},
+    ]
+    assert positive_group_counts(rows)['train']['is_joke'] == 1
+    assert positive_group_counts(rows)['validation']['is_joke'] == 1
+
+
+def test_repeat_variants_do_not_fill_freeze_or_coverage_quota(tmp_path):
+    db = seed(tmp_path, ['first retelling', 'second retelling'])
+    try:
+        db.execute("UPDATE texts SET group_id='same-material',split='train'")
+        rows = [{'sha': r['sha'], 'version': TOPICS['version'], 'provenance': 'codex_agent',
+                 'labels': {name: 'yes' for name in FEATURES},
+                 'reasons': {name: 'test fixture' for name in FEATURES}}
+                for r in db.execute('SELECT sha FROM texts')]
+        batch = tmp_path / 'test-annotations.jsonl'
+        batch.write_text(''.join(json.dumps(r) + '\n' for r in rows))
+        record(db, batch)
+        result = coverage(db)
+        assert result['positive_by_split']['train']['is_joke'] == 2
+        assert result['positive_groups_by_split']['train']['is_joke'] == 1
+        with pytest.raises(ValueError, match='"is_joke": 999'):
+            freeze(db, tmp_path / 'frozen')
+        assert not (tmp_path / 'frozen').exists()
+    finally:
+        db.close()
+
+
+def test_training_rechecks_unique_positive_families(tmp_path):
+    # Даже неизменённый снимок не проходит квоту тысячей пересказов одной статьи.
+    rows = [{'sha': str(i), 'split': 'train', 'group_id': 'same-material',
+             'provenance': 'codex_agent', 'labels': {name: 'yes' for name in FEATURES}}
+            for i in range(1000)]
+    encoded = ''.join(json.dumps(r) + '\n' for r in rows).encode()
+    (tmp_path / 'dataset.jsonl').write_bytes(encoded)
+    (tmp_path / 'dataset-manifest.json').write_text(json.dumps({'dataset_sha256': hashlib.sha256(encoded).hexdigest()}))
+    with pytest.raises(ValueError, match='positive repeat groups'):
+        validate_dataset(tmp_path)

@@ -13,7 +13,7 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from channel_corpus import CHECKOUT, FEATURES, TOPICS, connect, coverage, normalize
+from channel_corpus import CHECKOUT, FEATURES, TOPICS, connect, coverage, normalize, positive_group_counts
 
 
 def shingles(text):
@@ -188,7 +188,10 @@ def freeze(db, output, legacy_labels=None, legacy_worklist=None, legacy_audit=No
                 counts[r['split']][name] += 1
     if any(groups[a] & groups[b] for a, b in [('train', 'validation'), ('train', 'test'), ('validation', 'test')]):
         raise ValueError('Repeat group crosses dataset partitions')
-    missing = {t['id']: 1000 - counts['train'][t['id']] for t in TOPICS['topics'] if counts['train'][t['id']] < 1000}
+    group_counts = positive_group_counts(records.values())
+    training_groups = group_counts.get('train', {})
+    missing = {t['id']: 1000 - training_groups.get(t['id'], 0) for t in TOPICS['topics']
+               if training_groups.get(t['id'], 0) < 1000}
     if missing:
         raise ValueError('Training quotas not reached: ' + json.dumps(missing))
     result = sorted(records.values(), key=lambda r: r['sha'])
@@ -197,7 +200,8 @@ def freeze(db, output, legacy_labels=None, legacy_worklist=None, legacy_audit=No
     (output / 'dataset.jsonl').write_bytes(encoded)
     (output / 'taxonomy.json').write_text(json.dumps(taxonomy(), ensure_ascii=False, indent=2), encoding='utf-8')
     manifest = {'version': TOPICS['version'], 'dataset_sha256': hashlib.sha256(encoded).hexdigest(),
-        'rows': len(result), 'positive_by_split': dict(counts), 'annotation': 'Codex; agreement with agent, not independent human accuracy',
+        'rows': len(result), 'positive_by_split': dict(counts), 'positive_groups_by_split': group_counts,
+        'annotation': 'Codex; agreement with agent, not independent human accuracy',
         'split_seed': 20261001, 'repeat_group_overlap': 0, 'input': 'text_only'}
     (output / 'dataset-manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
     return manifest

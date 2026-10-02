@@ -103,18 +103,39 @@ def import_snapshot(db, path: Path):
     return count
 
 
+def positive_group_counts(rows):
+    """Одна семья повторов даёт не более одного примера на признак.
+
+    Число подписей без контекста не увеличивает квоту. Эта функция считает
+    только явные метки агента и не переносит их между похожими текстами.
+    """
+    groups = {}
+    for row in rows:
+        if row['labels'].get('caption_has_context') != 'yes':
+            continue
+        split = row['split'] or 'unassigned'
+        for name, value in row['labels'].items():
+            if value == 'yes':
+                groups.setdefault(split, {}).setdefault(name, set()).add(row['group_id'])
+    return {split: Counter({name: len(ids) for name, ids in values.items()})
+            for split, values in groups.items()}
+
+
 def coverage(db):
     counts = Counter()
     unclear = Counter()
     splits = {name: Counter() for name in ['train', 'validation', 'test', 'unassigned']}
-    for row in db.execute('SELECT a.labels_json,t.split FROM annotations a JOIN texts t ON a.sha=t.sha WHERE EXISTS(SELECT 1 FROM sources s WHERE s.sha=t.sha)'):
+    quota_rows = []
+    for row in db.execute('SELECT a.labels_json,t.split,t.group_id FROM annotations a JOIN texts t ON a.sha=t.sha WHERE EXISTS(SELECT 1 FROM sources s WHERE s.sha=t.sha)'):
         labels = json.loads(row['labels_json'])
+        quota_rows.append({'labels': labels, 'split': row['split'], 'group_id': row['group_id']})
         for name, value in labels.items():
             if value == 'yes':
                 counts[name] += 1
                 splits[row['split'] or 'unassigned'][name] += 1
             elif value == 'unclear':
                 unclear[name] += 1
+    group_counts = positive_group_counts(quota_rows)
     return {
         'source_messages': db.execute('SELECT COUNT(*) FROM sources').fetchone()[0],
         'unique_texts': db.execute('SELECT COUNT(*) FROM texts t WHERE length>0 AND EXISTS(SELECT 1 FROM sources s WHERE s.sha=t.sha)').fetchone()[0],
@@ -123,7 +144,8 @@ def coverage(db):
         'positive': {name: counts[name] for name in FEATURES},
         'unclear': {name: unclear[name] for name in FEATURES},
         'positive_by_split': {name: dict(value) for name, value in splits.items()},
-        'quota_ready': all(splits['train'][t['id']] >= 1000 for t in TOPICS['topics']),
+        'positive_groups_by_split': {name: dict(value) for name, value in group_counts.items()},
+        'quota_ready': all(group_counts.get('train', {}).get(t['id'], 0) >= 1000 for t in TOPICS['topics']),
     }
 
 

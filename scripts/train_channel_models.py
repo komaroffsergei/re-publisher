@@ -11,7 +11,6 @@ import json
 import random
 import sys
 import time
-from collections import Counter
 from pathlib import Path
 
 import joblib
@@ -21,7 +20,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.metrics import precision_recall_fscore_support
 
-from channel_corpus import CHECKOUT, TOPICS
+from channel_corpus import CHECKOUT, TOPICS, positive_group_counts
 from train_codex_baseline import labels_from_taxonomy
 from app.taxonomy.artifact import file_sha256
 
@@ -38,9 +37,9 @@ def validate_dataset(directory):
     groups = {part: {r['group_id'] for r in rows if r['split'] == part} for part in ['train', 'validation', 'test']}
     if any(groups[a] & groups[b] for a, b in [('train', 'validation'), ('train', 'test'), ('validation', 'test')]):
         raise ValueError('Repeat leakage')
-    counts = Counter(name for r in rows if r['split'] == 'train' for name, value in r['labels'].items() if value == 'yes')
-    if any(counts[t['id']] < 1000 for t in TOPICS['topics']):
-        raise ValueError('At least 1000 confirmed training positives per topic are required')
+    counts = positive_group_counts(rows).get('train', {})
+    if any(counts.get(t['id'], 0) < 1000 for t in TOPICS['topics']):
+        raise ValueError('At least 1000 confirmed training positive repeat groups per topic are required')
     return rows, manifest
 
 
@@ -218,6 +217,7 @@ def main():
         raise ValueError('Weights and private evaluation cannot be committed to Git')
     rows, dataset_manifest = validate_dataset(args.dataset)
     train = [r for r in rows if r['split'] == 'train']
+    training_positive_groups = positive_group_counts(train).get('train', {})
     validation = deduplicate_groups([r for r in rows if r['split'] == 'validation'])
     taxonomy = json.loads((args.dataset / 'taxonomy.json').read_text(encoding='utf-8'))
     names = labels_from_taxonomy(taxonomy)
@@ -286,7 +286,9 @@ def main():
             correct = sum(test[i]['labels'][topic['id']] == 'yes' and test[i]['labels']['caption_has_context'] == 'yes' for i in matched)
             passed = len(matched) >= 50 and correct / len(matched) >= .9
             report['routes'][topic['id']] = {**route, 'test_matched': len(matched), 'test_correct': correct,
-                'enabled': passed, 'model_version': model.model_version, 'train_positive': sum(r['labels'].get(topic['id']) == 'yes' for r in train),
+                'enabled': passed, 'model_version': model.model_version,
+                'train_positive': training_positive_groups.get(topic['id'], 0),
+                'train_positive_rows': sum(r['labels'].get(topic['id']) == 'yes' for r in train),
                 'test_sha256': hashlib.sha256(json.dumps([r['sha'] for r in test], sort_keys=True).encode()).hexdigest(),
                 'split_sha256': dataset_manifest['dataset_sha256']}
         del model
