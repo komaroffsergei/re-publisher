@@ -106,6 +106,16 @@ async def test_humor_filter_does_not_enqueue_ocr_for_old_buffer(db, client):
                       for key in ("is_joke","input_has_context")]}}
     preview = await client.post("/api/pipeline/filters/preview", json=draft)
     assert preview.status_code == 200
+    blocked = await client.post("/api/pipeline/filters/apply", json={**draft,"preview_digest":preview.json()["preview_digest"]})
+    assert blocked.status_code == 409
+    # Ручной эксперимент сохраняется выключенным до прохождения допуска.
+    disabled = {**draft, "enabled": False}
+    preview = await client.post("/api/pipeline/filters/preview", json=disabled)
+    saved = await client.post("/api/pipeline/filters/apply", json={**disabled,"preview_digest":preview.json()["preview_digest"]})
+    assert saved.status_code == 200 and saved.json()["application_id"] is None
+    # Даже после явного допуска профиль не подхватывает старый буфер.
+    get_settings().humor_auto_enabled = True
+    preview = await client.post("/api/pipeline/filters/preview", json=draft)
     result = await client.post("/api/pipeline/filters/apply", json={**draft,"preview_digest":preview.json()["preview_digest"]})
     assert result.status_code == 200 and result.json()["application_id"] is None
     async with db() as session:
