@@ -1,0 +1,4 @@
+<section class="post-selection"
+         data-post-selection
+         data-entry-id="{{ entry.id }}"
+         data-compact="{{ 'true' if selection_compact|default(false) else 'false' }}">{% if not selection_compact|default(false) %}<h3>Лейблы <span class="badge" data-mark-count>{{ (selection_state.get("marks") or [])|length }}</span></h3>{% endif %}<div data-selection-body></div><script type="application/json" data-selection-initial>{{ selection_state|tojson }}</script></section>

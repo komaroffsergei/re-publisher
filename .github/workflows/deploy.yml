@@ -3,16 +3,69 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  packages: write
 jobs:
   tests:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: qa
+          POSTGRES_PASSWORD: qa-password
+          POSTGRES_DB: publisher_filter_qa
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U qa" --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - run: pip install '.[dev]'
-      - run: pytest
-# Deployment uses a pinned image built outside the VPS.
-# No SSH credentials, host-wide Docker cleanup or log deletion.
+      - run: python -m alembic upgrade head
+        env:
+          DB_DSN: postgresql+asyncpg://qa:qa-password@127.0.0.1/publisher_filter_qa
+      - run: python -m pytest
+        env:
+          DB_DSN: postgresql+asyncpg://qa:qa-password@127.0.0.1/publisher_filter_qa
+          FILTER_TEST_DSN: postgresql+asyncpg://qa:qa-password@127.0.0.1/publisher_filter_qa
+  image:
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        id: build
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/komaroffsergei/re-publisher:taxonomy-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Check route installer in the production image
+        env:
+          BASE_IMAGE: ghcr.io/komaroffsergei/re-publisher@${{ steps.build.outputs.digest }}
+        run: docker run --rm "$BASE_IMAGE" python -m scripts.install_channel_routes --help
+      - uses: docker/build-push-action@v6
+        id: minilm
+        with:
+          context: .
+          file: Dockerfile.minilm
+          build-args: BASE_IMAGE=ghcr.io/komaroffsergei/re-publisher:taxonomy-${{ github.sha }}
+          push: true
+          tags: ghcr.io/komaroffsergei/re-publisher:minilm-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - run: echo "Image digest ${{ steps.build.outputs.digest }}"
+      - run: echo "MiniLM image digest ${{ steps.minilm.outputs.digest }}"
+
+# Deployment uses the pinned image built outside the VPS.
+# The workflow has no SSH credentials or host-wide cleanup.

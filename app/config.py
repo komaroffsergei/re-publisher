@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -31,6 +32,7 @@ class Settings(BaseSettings):
     sync_lookback_hours: int = Field(default=168, ge=1, validation_alias="SYNC_LOOKBACK_HOURS")
     media_max_bytes: int = Field(default=104_857_600, ge=1, validation_alias="MEDIA_MAX_BYTES")
     folder_refresh_seconds: int = Field(default=300, ge=10, validation_alias="FOLDER_REFRESH_SECONDS")
+    collector_mode: Literal["window", "new_only"] = Field(default="window", validation_alias="COLLECTOR_MODE")
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
 
     cache_dir: str = Field(default="./cache", validation_alias="CACHE_DIR")
@@ -44,6 +46,8 @@ class Settings(BaseSettings):
     classifier_high_confidence: float = Field(default=0.90, validation_alias="CLASSIFIER_HIGH_CONFIDENCE")
     allow_pseudo_labels: bool = Field(default=False, validation_alias="ALLOW_PSEUDO_LABELS")
     auto_accept_codex_labels: bool = Field(default=False, validation_alias="AUTO_ACCEPT_CODEX_LABELS")
+    taxonomy_enabled: bool = Field(default=False, validation_alias="TAXONOMY_ENABLED")
+    taxonomy_model_dir: str = Field(default="./models/max-taxonomy-20260929", validation_alias="TAXONOMY_MODEL_DIR")
 
     summary_backend: str = Field(default="extractive_fallback", validation_alias="SUMMARY_BACKEND")
     summary_model_name: str = Field(default="cointegrated/rut5-base-absum", validation_alias="SUMMARY_MODEL_NAME")
@@ -87,6 +91,8 @@ class Settings(BaseSettings):
     max_channel_chat_id: str | None = Field(default=None, validation_alias="MAX_CHANNEL_CHAT_ID")
     max_channel_link: str | None = Field(default=None, validation_alias="MAX_CHANNEL_LINK")
     max_api_base: str = Field(default="https://platform-api2.max.ru", validation_alias="MAX_API_BASE")
+    max_publisher_enabled: bool = Field(default=False, validation_alias="MAX_PUBLISHER_ENABLED")
+    max_bot_token_file: str = Field(default="/run/secrets/max_bot_token", validation_alias="MAX_BOT_TOKEN_FILE")
     max_publish_random_min_minutes: int = Field(default=1, ge=0, validation_alias="MAX_PUBLISH_RANDOM_MIN_MINUTES")
     max_publish_random_max_minutes: int = Field(default=20, ge=1, validation_alias="MAX_PUBLISH_RANDOM_MAX_MINUTES")
     max_publish_loop_interval_seconds: int = Field(default=30, ge=5, validation_alias="MAX_PUBLISH_LOOP_INTERVAL_SECONDS")

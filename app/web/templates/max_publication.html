@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="toolbar"><div><span class="eyebrow">MAX</span><h1>Публикации</h1><p class="muted">Куда отправляется пост, что уже доставлено и где отправка остановилась.</p></div><a class="button secondary" href="/pipeline#ready">Подготовленные посты →</a></section>
+<div id="max-status" class="notice" role="status">Загружаю состояние…</div>
+<div id="max-counts" class="metrics" aria-label="Состояние доставки"></div>
+<article><header class="section-heading"><h2>Каналы и маршруты</h2><button type="button" id="max-refresh">Обновить</button></header><div id="max-channels" class="dashboard-grid"></div><p class="muted">Оценка модели проверяется фильтром. Назначенный лейбл определяет канал. Старый сохранённый лейбл без актуального совпадения не запускает отправку.</p></article>
+<article><header class="section-heading"><h2>Первая партия</h2><span class="badge">9 × 20</span></header><div id="max-batches"></div><p class="muted">Состав фиксируется после проверки каждой карточки. Изменённые посты и найденные в истории повторы не отправляются. После подтверждения всех 180 публикаций можно включить отправку новых сообщений.</p><button type="button" id="max-automatic">Автоматическая отправка выключена</button></article>
+<article><header class="section-heading"><h2>История доставки</h2><span class="muted">Последние 100</span></header><div id="max-history" class="table-scroll"></div><p class="muted">«Результат неизвестен» — запрос мог быть принят MAX. Повтор заблокирован до сверки канала.</p></article>
+<script src="/static/max-publication.js?v=max-4" defer></script>
+{% endblock %}

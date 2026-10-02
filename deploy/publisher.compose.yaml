@@ -23,6 +23,9 @@ x-app: &app
 services:
   web:
     <<: *app
+    environment:
+      DB_POOL_SIZE: "2"
+      DB_MAX_OVERFLOW: "0"
     command: [uvicorn, app.web.main:app, --host, 0.0.0.0, --port, "8080"]
     ports: ["127.0.0.1:18404:8080"]
     healthcheck:
@@ -36,9 +39,110 @@ services:
     <<: *app
     command: [python, -m, app.main, run, --folder, MAX]
     networks: [backend, telegram-egress]
+    environment:
+      COLLECTOR_MODE: new_only
+      COLLECTOR_PROCESS_SAVED_POSTS: "false"
+      COLLECT_COMMENTS: "false"
+      AUTO_PUBLISH: "false"
+      ENABLE_EXTERNAL_LLM: "false"
+      DB_POOL_SIZE: "3"
+      DB_MAX_OVERFLOW: "0"
     healthcheck:
-      test: [CMD-SHELL, "test -s /app/sessions/max_collector.session"]
+      test: [CMD, python, -c, "import json,time;d=json.load(open('/tmp/publisher-health-collector.json'));assert time.time()-d['heartbeat_at']<60 and not d['error'] and d['last_success_at'] and time.time()-d['last_success_at']<900"]
       interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  pipeline-coordinator:
+    <<: *app
+    command: [python, -m, app.pipeline_coordinator]
+    environment:
+      AUTO_PUBLISH: "false"
+      ENABLE_EXTERNAL_LLM: "false"
+      ENABLE_PROCESSING: "false"
+      DB_POOL_SIZE: "1"
+      DB_MAX_OVERFLOW: "0"
+    networks: [backend]
+    volumes: ["./media:/app/media:ro"]
+    mem_limit: 256m
+    cpus: 0.25
+    read_only: true
+    tmpfs: [/tmp]
+    healthcheck:
+      test: [CMD, python, -c, "import json,time;d=json.load(open('/tmp/publisher-health-coordinator.json'));assert time.time()-d['heartbeat_at']<60 and not d['error']"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  taxonomy-worker:
+    <<: *app
+    command: [python, -m, app.taxonomy.worker]
+    environment:
+      TAXONOMY_WORKER_MODEL: tfidf
+      DB_POOL_SIZE: "1"
+      DB_MAX_OVERFLOW: "0"
+    networks: [backend]
+    volumes:
+      - ./models:/app/models:ro
+    mem_limit: 768m
+    cpus: 1.0
+    read_only: true
+    tmpfs: [/tmp]
+    healthcheck:
+      test: [CMD, python, -c, "import os,time;assert time.time()-os.path.getmtime('/tmp/taxonomy-worker-heartbeat')<45"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  taxonomy-worker-minilm:
+    <<: *app
+    image: ${PUBLISHER_MINILM_IMAGE:?PUBLISHER_MINILM_IMAGE is required}
+    command: [python, -m, app.taxonomy.worker]
+    environment:
+      TAXONOMY_WORKER_MODEL: minilm
+      DB_POOL_SIZE: "1"
+      DB_MAX_OVERFLOW: "0"
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      OMP_NUM_THREADS: "1"
+    networks: [backend]
+    volumes:
+      - ./models:/app/models:ro
+    mem_limit: 2048m
+    cpus: 1.0
+    read_only: true
+    tmpfs: [/tmp]
+    healthcheck:
+      test: [CMD, python, -c, "import os,time;assert time.time()-os.path.getmtime('/tmp/taxonomy-worker-heartbeat')<45"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+
+  publication-worker:
+    <<: *app
+    command: [python, -m, app.publication.worker]
+    environment:
+      MAX_PUBLISHER_ENABLED: ${MAX_PUBLISHER_ENABLED:-false}
+      MAX_BOT_TOKEN_FILE: /run/secrets/max_bot_token
+      AUTO_PUBLISH: "false"
+      ENABLE_EXTERNAL_LLM: "false"
+      DB_POOL_SIZE: "1"
+      DB_MAX_OVERFLOW: "0"
+    networks: [backend, edge]
+    volumes:
+      - ./media:/app/media:ro
+      - ./secrets/max_bot_token:/run/secrets/max_bot_token:ro
+    mem_limit: 256m
+    cpus: 0.25
+    read_only: true
+    tmpfs: [/tmp]
+    healthcheck:
+      test: [CMD, python, -c, "import json,time;d=json.load(open('/tmp/publisher-health-publication-worker.json'));assert time.time()-d['heartbeat_at']<60 and not d['error']"]
+      interval: 20s
       timeout: 5s
       retries: 3
       start_period: 30s

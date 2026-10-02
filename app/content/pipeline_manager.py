@@ -30,11 +30,9 @@ from app.content.max_publisher import (
 from app.content.media_assets import download_link_images, download_link_images_for_post, register_telegram_media, register_telegram_media_for_post
 from app.content.pipeline_activity import try_acquire_pipeline_work_lock
 from app.content.pipeline_entries import (
-    PIPELINE_STAGE_ENRICHED,
     PIPELINE_STAGE_PUBLISHED,
     PIPELINE_STAGE_READY,
     PIPELINE_STAGE_RECEIVED,
-    PIPELINE_STAGE_REWRITTEN,
     PIPELINE_STAGE_SORTED,
     ensure_missing_pipeline_entries,
     publication_readiness_for_post,
@@ -573,10 +571,6 @@ async def refresh_pipeline_entries(
                 if published
                 else PIPELINE_STAGE_READY
                 if draft and draft.status == READY_DRAFT_STATUS
-                else PIPELINE_STAGE_REWRITTEN
-                if draft
-                else PIPELINE_STAGE_ENRICHED
-                if eligibility.is_eligible
                 else PIPELINE_STAGE_SORTED
             )
             values = {

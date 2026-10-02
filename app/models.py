@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, Numeric, Text, UniqueConstraint, func, text
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, Numeric, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -13,6 +13,21 @@ from app.db import Base
 class TimestampMixin:
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class ServiceRuntime(Base):
+    __tablename__ = "service_runtime"
+    name: Mapped[str] = mapped_column(Text, primary_key=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    heartbeat_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_success_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class TelegramChat(TimestampMixin, Base):
@@ -75,6 +90,13 @@ class TelegramComment(TimestampMixin, Base):
 class TelegramSyncState(Base):
     __tablename__ = "telegram_sync_state"
 
+    live_member: Mapped[bool] = mapped_column(
+        Boolean, server_default="false", nullable=False
+    )
+    live_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    reconciled_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     chat_peer_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     last_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -469,6 +491,27 @@ class RewritePromptVersion(Base):
 
 class PipelineEntry(TimestampMixin, Base):
     __tablename__ = "pipeline_entries"
+
+    auto_enabled: Mapped[bool] = mapped_column(
+        Boolean, server_default="false", nullable=False, index=True
+    )
+    auto_state: Mapped[str] = mapped_column(
+        Text, server_default="pending", nullable=False
+    )
+    auto_attempts: Mapped[int] = mapped_column(
+        Integer, server_default="0", nullable=False
+    )
+    auto_retry_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    auto_phase: Mapped[str | None] = mapped_column(Text, nullable=True)
+    auto_manual_mark: Mapped[bool] = mapped_column(
+        Boolean, server_default="false", nullable=False
+    )
+    ready_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     __table_args__ = (
         UniqueConstraint("content_item_id", name="uq_pipeline_entries_content_item"),
         UniqueConstraint("source_post_id", name="uq_pipeline_entries_source_post"),
@@ -496,8 +539,143 @@ class PipelineEntry(TimestampMixin, Base):
     published_post_id: Mapped[int | None] = mapped_column(ForeignKey("published_posts.id", ondelete="SET NULL"), nullable=True)
     stage: Mapped[str] = mapped_column(Text, server_default="received", index=True, nullable=False)
     status: Mapped[str] = mapped_column(Text, server_default="rewrite_pending", index=True, nullable=False)
+    marked_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    marked_source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    marked_text_sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
+    marked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_operation_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True, nullable=False)
+
+
+class TaxonomyClassification(Base):
+    __tablename__ = "taxonomy_classifications"
+    __table_args__ = (UniqueConstraint("pipeline_entry_id", "model_key", name="uq_taxonomy_classifications_entry_model"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    pipeline_entry_id: Mapped[int] = mapped_column(
+        ForeignKey("pipeline_entries.id", ondelete="CASCADE"), nullable=False
+    )
+    model_key: Mapped[str] = mapped_column(Text, server_default="tfidf", nullable=False)
+    current_run_id: Mapped[int | None] = mapped_column(ForeignKey("taxonomy_runs.id", ondelete="SET NULL"), nullable=True)
+    source_post_id: Mapped[int] = mapped_column(ForeignKey("telegram_posts.id", ondelete="CASCADE"), nullable=False)
+    text_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    model_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(Text, server_default="queued", index=True, nullable=False)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    elapsed_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class TaxonomyRun(Base):
+    """One persisted attempt; results remain available after another run or a text edit."""
+
+    __tablename__ = "taxonomy_runs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    pipeline_entry_id: Mapped[int] = mapped_column(ForeignKey("pipeline_entries.id", ondelete="CASCADE"), nullable=False)
+    source_post_id: Mapped[int] = mapped_column(ForeignKey("telegram_posts.id", ondelete="CASCADE"), nullable=False)
+    model_key: Mapped[str] = mapped_column(Text, nullable=False)
+    text_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    model_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    elapsed_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    origin: Mapped[str] = mapped_column(Text, server_default="run", nullable=False)
+    queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class FilterMark(TimestampMixin, Base):
+    """Словарь признаков для маршрутизации; не обучающие метки модели."""
+    __tablename__ = "filter_marks"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    description: Mapped[str] = mapped_column(Text, server_default="", nullable=False)
+    color: Mapped[str] = mapped_column(Text, server_default="#a78bfa", nullable=False)
+    archived: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
+    label_id: Mapped[str | None] = mapped_column(Text, unique=True, nullable=True)
+
+
+class SelectionFilter(TimestampMixin, Base):
+    __tablename__ = "selection_filters"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, server_default="true", nullable=False)
+    archived: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
+    active_version_id: Mapped[int | None] = mapped_column(
+        ForeignKey("selection_filter_versions.id", use_alter=True, name="fk_selection_filter_active_version"), nullable=True)
+
+
+class SelectionFilterVersion(Base):
+    __tablename__ = "selection_filter_versions"
+    __table_args__ = (UniqueConstraint("filter_id", "number", name="uq_selection_filter_version"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    filter_id: Mapped[int] = mapped_column(ForeignKey("selection_filters.id", ondelete="CASCADE"), index=True)
+    number: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    model_key: Mapped[str] = mapped_column(Text, nullable=False)
+    mark_id: Mapped[int] = mapped_column(ForeignKey("filter_marks.id"), nullable=False)
+    assigned_label_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expression: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class FilterEvaluation(Base):
+    __tablename__ = "filter_evaluations"
+    __table_args__ = (UniqueConstraint("entry_id", "version_id", "input_key", name="uq_filter_evaluation_input"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    entry_id: Mapped[int] = mapped_column(ForeignKey("pipeline_entries.id", ondelete="CASCADE"), index=True)
+    version_id: Mapped[int] = mapped_column(ForeignKey("selection_filter_versions.id"), index=True)
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("taxonomy_runs.id", ondelete="SET NULL"), nullable=True)
+    text_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    input_key: Mapped[str] = mapped_column(Text, nullable=False)
+    outcome: Mapped[str] = mapped_column(Text, nullable=False)
+    trace: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class FilterApplication(TimestampMixin, Base):
+    """Курсор задания хранится в БД; обработка партии и курсор коммитятся вместе."""
+    __tablename__ = "filter_applications"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    version_id: Mapped[int] = mapped_column(ForeignKey("selection_filter_versions.id"), index=True)
+    status: Mapped[str] = mapped_column(Text, server_default="queued", nullable=False)
+    last_entry_id: Mapped[int] = mapped_column(BigInteger, server_default="0", nullable=False)
+    max_entry_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    processed: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    matched: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    unknown: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    backfilled: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class PostFilterMark(Base):
+    __tablename__ = "post_filter_marks"
+    __table_args__ = (UniqueConstraint("entry_id", "mark_id", name="uq_post_filter_mark"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    entry_id: Mapped[int] = mapped_column(ForeignKey("pipeline_entries.id", ondelete="CASCADE"), index=True)
+    mark_id: Mapped[int] = mapped_column(ForeignKey("filter_marks.id"), index=True)
+    active: Mapped[bool] = mapped_column(Boolean, server_default="true", nullable=False)
+    assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class FilterMarkEvent(Base):
+    __tablename__ = "filter_mark_events"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    entry_id: Mapped[int] = mapped_column(ForeignKey("pipeline_entries.id", ondelete="CASCADE"), index=True)
+    mark_id: Mapped[int] = mapped_column(ForeignKey("filter_marks.id"))
+    evaluation_id: Mapped[int | None] = mapped_column(ForeignKey("filter_evaluations.id"), nullable=True)
+    action: Mapped[str] = mapped_column(Text, nullable=False)
+    dedup_key: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class RewriteAttempt(Base):
@@ -558,3 +736,124 @@ class SearchDocument(TimestampMixin, Base):
     source_chat: Mapped[str | None] = mapped_column(Text, index=True, nullable=True)
     language: Mapped[str | None] = mapped_column(Text, nullable=True)
     tsv: Mapped[Any | None] = mapped_column(TSVECTOR, nullable=True)
+
+
+class MaxChannel(TimestampMixin, Base):
+    __tablename__ = 'max_channels'
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    public_url: Mapped[str | None] = mapped_column(Text)
+    access_state: Mapped[str] = mapped_column(Text, server_default='unchecked', nullable=False)
+    permissions: Mapped[list] = mapped_column(JSONB, server_default='[]', nullable=False)
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    check_requested: Mapped[bool] = mapped_column(Boolean, server_default='true', nullable=False)
+    history_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
+    last_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class MaxPublicationRoute(TimestampMixin, Base):
+    __tablename__ = 'max_publication_routes'
+    __table_args__ = (UniqueConstraint('mark_id', 'channel_id', name='uq_max_route_mark_channel'),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    mark_id: Mapped[int] = mapped_column(ForeignKey('filter_marks.id'), nullable=False)
+    filter_id: Mapped[int] = mapped_column(ForeignKey('selection_filters.id'), nullable=False)
+    channel_id: Mapped[int] = mapped_column(ForeignKey('max_channels.id'), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, server_default='false', nullable=False)
+    approved_version_id: Mapped[int | None] = mapped_column(ForeignKey('selection_filter_versions.id'))
+    # Заполняется из проверенного отчёта обучения, не из формы настройки маршрута.
+    quality_gate: Mapped[dict] = mapped_column(JSONB, server_default='{}', nullable=False)
+
+
+class MaxPublicationControl(Base):
+    __tablename__ = 'max_publication_control'
+    name: Mapped[str] = mapped_column(Text, primary_key=True)
+    automatic_enabled: Mapped[bool] = mapped_column(Boolean, server_default='false', nullable=False)
+    enabled_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    scan_after_entry_id: Mapped[int] = mapped_column(BigInteger, server_default='0', nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class MaxPublicationBatch(TimestampMixin, Base):
+    __tablename__ = 'max_publication_batches'
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, server_default='prepared', nullable=False)
+    manifest: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    manifest_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class MaxPublicationDelivery(TimestampMixin, Base):
+    __tablename__ = 'max_publication_deliveries'
+    __table_args__ = (
+        UniqueConstraint('channel_id', 'source_key', name='uq_max_delivery_channel_source'),
+        UniqueConstraint('channel_id', 'content_sha256', name='uq_max_delivery_channel_content'),
+        CheckConstraint("status IN ('queued','preparing','sending','verifying','delivered','failed','unknown','stale','cancelled','held')", name='ck_max_delivery_status'),
+        Index('ix_max_delivery_queue', 'status', 'next_attempt_at', 'id'),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    entry_id: Mapped[int] = mapped_column(ForeignKey('pipeline_entries.id'), nullable=False, index=True)
+    route_id: Mapped[int] = mapped_column(ForeignKey('max_publication_routes.id'), nullable=False)
+    channel_id: Mapped[int] = mapped_column(ForeignKey('max_channels.id'), nullable=False)
+    batch_id: Mapped[int | None] = mapped_column(ForeignKey('max_publication_batches.id'))
+    source_key: Mapped[str] = mapped_column(Text, nullable=False)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    text_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    payload_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(Text, server_default='queued', nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, server_default='0', nullable=False)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    source_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class MaxPublicationPart(TimestampMixin, Base):
+    __tablename__ = 'max_publication_parts'
+    __table_args__ = (UniqueConstraint('delivery_id', 'number', name='uq_max_part_delivery_number'),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    delivery_id: Mapped[int] = mapped_column(ForeignKey('max_publication_deliveries.id'), nullable=False, index=True)
+    number: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(Text, server_default='prepared', nullable=False)
+    request: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    # Upload-токены нужны для повторного запроса после attachment.not.ready.
+    # Эти поля никогда не возвращаются в web API и не попадают в журналы.
+    attachments: Mapped[list] = mapped_column(JSONB, server_default='[]', nullable=False)
+    mid: Mapped[str | None] = mapped_column(Text, unique=True)
+    public_url: Mapped[str | None] = mapped_column(Text)
+    send_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    receipt_sha256: Mapped[str | None] = mapped_column(Text)
+    absence_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    absence_scan_sha256: Mapped[str | None] = mapped_column(Text)
+    absence_scan_count: Mapped[int] = mapped_column(Integer, server_default='0', nullable=False)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
+
+
+class MaxPublicationAttempt(Base):
+    __tablename__ = 'max_publication_attempts'
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    part_id: Mapped[int] = mapped_column(ForeignKey('max_publication_parts.id'), nullable=False, index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    outcome: Mapped[str] = mapped_column(Text, nullable=False)
+    http_status: Mapped[int | None] = mapped_column(Integer)
+    error_code: Mapped[str | None] = mapped_column(Text)
+    request_sha256: Mapped[str | None] = mapped_column(Text)
+
+
+class MaxObservedMessage(Base):
+    __tablename__ = 'max_observed_messages'
+    __table_args__ = (UniqueConstraint('channel_id', 'mid', name='uq_max_observed_channel_mid'),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    channel_id: Mapped[int] = mapped_column(ForeignKey('max_channels.id'), nullable=False)
+    mid: Mapped[str] = mapped_column(Text, nullable=False)
+    source_url: Mapped[str | None] = mapped_column(Text, index=True)
+    text_sha256: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

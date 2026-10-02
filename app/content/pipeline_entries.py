@@ -24,32 +24,20 @@ from app.models import (
     PublishedPost,
     TelegramChat,
     TelegramPost,
+    TaxonomyClassification,
 )
+from app.taxonomy.jobs import text_sha256
 
-PIPELINE_STAGE_RECEIVED = "received"
-PIPELINE_STAGE_SORTED = "sorted"
-PIPELINE_STAGE_ENRICHED = "enriched"
-PIPELINE_STAGE_REWRITTEN = "rewritten"
-PIPELINE_STAGE_READY = "ready"
-PIPELINE_STAGE_PUBLISHED = "published"
-
-PIPELINE_STAGES = [
+from app.content.pipeline_stages import (
     PIPELINE_STAGE_RECEIVED,
     PIPELINE_STAGE_SORTED,
-    PIPELINE_STAGE_ENRICHED,
-    PIPELINE_STAGE_REWRITTEN,
+    PIPELINE_STAGE_FILTERED,
+    PIPELINE_STAGE_MARKING,
     PIPELINE_STAGE_READY,
     PIPELINE_STAGE_PUBLISHED,
-]
-
-PIPELINE_STAGE_LABELS = {
-    PIPELINE_STAGE_RECEIVED: "Не готовы",
-    PIPELINE_STAGE_SORTED: "Отсортирован",
-    PIPELINE_STAGE_ENRICHED: "Обогащен",
-    PIPELINE_STAGE_REWRITTEN: "Переписан",
-    PIPELINE_STAGE_READY: "Готов к публикации",
-    PIPELINE_STAGE_PUBLISHED: "Опубликован",
-}
+    PIPELINE_STAGES,
+    PIPELINE_STAGE_LABELS,
+)
 
 INCOMPLETE_ENTRY_STATUSES = {
     "blocked",
@@ -101,10 +89,8 @@ def pipeline_stage_for_state(
         return PIPELINE_STAGE_PUBLISHED
     if is_publication_ready and draft_status == READY_DRAFT_STATUS:
         return PIPELINE_STAGE_READY
-    if draft_status:
-        return PIPELINE_STAGE_REWRITTEN
-    if has_classification and has_content_item and is_eligible and is_enriched:
-        return PIPELINE_STAGE_ENRICHED
+    if draft_status or (has_classification and has_content_item and is_eligible and is_enriched):
+        return PIPELINE_STAGE_SORTED
     if has_classification:
         return PIPELINE_STAGE_SORTED
     return PIPELINE_STAGE_RECEIVED
@@ -352,6 +338,36 @@ async def sync_pipeline_entry_stage(session: AsyncSession, post_id: int) -> Pipe
         is_enriched=readiness.has_enrichment,
         is_failed_or_incomplete=status in INCOMPLETE_ENTRY_STATUSES,
     )
+    if classification is None and published is None:
+        taxonomy_jobs = list((
+            await session.execute(
+                select(TaxonomyClassification).where(TaxonomyClassification.pipeline_entry_id == entry.id)
+            )
+        ).scalars())
+        post = (
+            await session.execute(select(TelegramPost).where(TelegramPost.id == post_id))
+        ).scalar_one_or_none()
+        completed = next((job for job in taxonomy_jobs if post and job.text_sha256 == text_sha256(post.text)
+                          and job.status in {"complete", "media_only", "empty"}), None)
+        if completed:
+            stage = PIPELINE_STAGE_SORTED
+            status = ("taxonomy_media_only" if completed.status == "media_only" else "taxonomy_empty") if completed.status != "complete" else (
+                "taxonomy_review" if (completed.result or {}).get("review_status") == "needs_review" else "taxonomy_sorted"
+            )
+    if entry.marked_text_sha256:
+        current_post = (await session.execute(select(TelegramPost).where(TelegramPost.id == post_id))).scalar_one_or_none()
+        if current_post and not current_post.is_deleted and entry.marked_text_sha256 == text_sha256(current_post.text):
+            if stage == PIPELINE_STAGE_SORTED:
+                stage = PIPELINE_STAGE_MARKING
+                status = "marked"
+        else:
+            entry.marked_text = None
+            entry.marked_source_url = None
+            entry.marked_text_sha256 = None
+            entry.marked_at = None
+    from app.content.selection_filters import has_marks
+    if stage in {PIPELINE_STAGE_RECEIVED, PIPELINE_STAGE_SORTED} and await has_marks(session, entry.id):
+        stage = PIPELINE_STAGE_FILTERED
     now = datetime.now(timezone.utc)
     values: dict[str, Any] = {
         "content_item_id": item.id if item else None,

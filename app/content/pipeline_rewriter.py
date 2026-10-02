@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.content.source_marking import telegram_post_source_url
+
 import asyncio
 import sys
 import time
@@ -84,16 +86,7 @@ def blocking_risk_flags(risk_flags: list[str]) -> list[str]:
     return [flag for flag in risk_flags if flag in BLOCKING_RISK_FLAGS or flag not in NON_BLOCKING_RISK_FLAGS]
 
 
-def telegram_post_source_url(post: TelegramPost | None, chat: TelegramChat | None) -> str | None:
-    if not post or not post.message_id:
-        return None
-    username = str(chat.username or "").strip().lstrip("@") if chat and chat.username else ""
-    if username:
-        return f"https://t.me/{username}/{post.message_id}"
-    peer_id = int(post.chat_peer_id or 0)
-    if peer_id < -1000000000000:
-        return f"https://t.me/c/{abs(peer_id) - 1000000000000}/{post.message_id}"
-    return None
+
 
 
 def append_source_post_link(body: str, source_url: str | None) -> str:

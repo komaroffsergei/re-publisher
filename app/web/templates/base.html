@@ -1,35 +1,11 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ title or "Re Publisher" }}</title>
-  <link rel="stylesheet" href="/static/styles.css?v=kanban-live-20260622-1">
-</head>
-<body>
-  {% set processing_enabled = request.app.state.settings.enable_processing %}
-  <header class="topbar">
-    <a class="brand" href="{{ '/processed' if processing_enabled else '/pipeline' }}">Re Publisher</a>
-    <nav>
-      {% if processing_enabled %}
-      <a href="/processed">Материалы</a>
-      <a href="/yandex-genres">Yandex жанры</a>
-      <a href="/codex-training">Codex обучение</a>
-      <a href="/topic-audit">Аудит тем</a>
-      <a href="/drafts">Черновики</a>
-      <a href="/labels">Разметка</a>
-      <a href="/models">Модели</a>
-      {% endif %}
-      <a href="/pipeline">Конвейер</a>
-      {% if processing_enabled %}
-      <a href="/rewrite-progress">Прогресс рерайта</a>
-      <a href="/pipeline-prompts">Промпты</a>
-      {% endif %}
-      <a href="/search">Поиск</a>
-    </nav>
-  </header>
-  <main class="page">
-    {% block content %}{% endblock %}
-  </main>
-</body>
-</html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1">
+        <title>{{ title or "Re Publisher" }}</title>
+        <link rel="stylesheet" href="/static/styles.css?v=max-4">
+        <script src="/static/post-selection.js?v=preview-1" defer></script>
+    </head>
+    <body><header class="topbar"><a class="brand" href="/dashboard">re<span>:</span>publisher</a><nav aria-label="Основная навигация">{% for href,name in [('/dashboard','Обзор'),('/pipeline','Конвейер'),('/pipeline/filters','Фильтры'),('/marks','Признаки'),('/publication','MAX · отправка')] %}<a href="{{ href }}"
+   {% if request.url.path==href %}aria-current="page"{% endif %}>{{ name }}</a>{% endfor %}</nav><span class="workspace-label">MAX · личная рабочая область</span></header><main class="page">{% block content %}{% endblock %}</main></body></html>
