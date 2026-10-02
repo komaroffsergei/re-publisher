@@ -10,6 +10,7 @@ import importlib.metadata
 import hashlib
 import json
 import random
+import re
 import shutil
 import time
 from pathlib import Path
@@ -79,20 +80,53 @@ def metrics(scores, rows, thresholds=None):
     return output
 
 
+def route_evidence(scores, rows, joke, context):
+    """Неясную метку не превращаем в отрицательную и не прячем из допуска.
+
+    Нижняя граница: только подтверждённые да/да в числителе, все совпадения
+    в знаменателе. Пост без контекста считается известной ошибкой маршрута,
+    даже если его is_joke неясно. Обучение по-прежнему маскирует неизвестное.
+    """
+    matched = [i for i in range(len(rows)) if scores[i,0] >= joke and scores[i,1] >= context]
+    correct = sum(all(rows[i]["labels"][n] == "да" for n in NAMES) for i in matched)
+    wrong = sum(any(rows[i]["labels"][n] == "нет" for n in NAMES) for i in matched)
+    return {"matched":len(matched), "correct":correct, "confirmed_wrong":wrong,
+        "unresolved":len(matched)-correct-wrong, "precision":correct/max(1,len(matched)),
+        "precision_definition":"lower bound: confirmed yes/yes divided by all matched inputs"}
+
+
 def route(scores, rows):
     scores = np.round(scores,4)
-    ix = [i for i,r in enumerate(rows) if all(r["labels"][n] in {"да","нет"} for n in NAMES)]
-    positive = sum(all(rows[i]["labels"][n]=="да" for n in NAMES) for i in ix)
+    positive = sum(all(row["labels"][n]=="да" for n in NAMES) for row in rows)
     best = None
     for joke in np.linspace(.3,.99,70):
         for context in np.linspace(.5,.99,50):
-            matched = [i for i in ix if scores[i,0]>=joke and scores[i,1]>=context]
-            correct = sum(all(rows[i]["labels"][n]=="да" for n in NAMES) for i in matched)
-            if len(matched)<50 or correct/len(matched)<.92: continue
+            evidence = route_evidence(scores,rows,joke,context)
+            if evidence["matched"]<50 or evidence["precision"]<.92: continue
             item = {"is_joke_threshold":float(joke),"input_has_context_threshold":float(context),
-                "matched":len(matched),"correct":correct,"precision":correct/len(matched),"recall":correct/max(1,positive)}
+                **evidence,"recall":evidence["correct"]/max(1,positive)}
             if best is None or (item["recall"],item["precision"])>(best["recall"],best["precision"]): best=item
     return best
+
+
+SOURCE_MARKS = {"it memes","prg_memes","@itmemes","@ai_newz","@exploitex","@ai_machinelearning_big_data","ai_machinelearning_big_data"}
+
+
+def strip_source_marks(text):
+    """Только диагностическая абляция. Рабочий вход и корпус не меняются."""
+    return "\n".join(line for line in text.splitlines()
+        if re.sub(r"^[^a-zа-я@]+", "", line.strip().lower()) not in SOURCE_MARKS)
+
+
+def diagnostic_slices(scores, rows):
+    groups = {}
+    for i,row in enumerate(rows):
+        peer = row["sources"][0]["peer"]
+        names = [f"source:{peer}", "caption:empty" if not row["caption"].strip()
+                 else "caption:short" if row["caption_length"] <= 500 else "caption:long"]
+        for name in names:groups.setdefault(name,[]).append(i)
+    return {name:{"rows":len(ix),"metrics":metrics(scores[ix],[rows[i] for i in ix])}
+            for name,ix in sorted(groups.items())}
 
 
 def tfidf(train, validation, output, caption_only=False):
@@ -223,7 +257,17 @@ def main():
             times.append(time.perf_counter()-start);predictions.append([result['scores'][n] for n in NAMES])
         prediction=np.asarray(predictions)
         report["models"][key]={"validation":metrics(scores[key],validation),"test":metrics(prediction,test),
+            "test_slices":diagnostic_slices(prediction,test),
             "local_cpu_p95_seconds":float(np.percentile(times,95)),"version":model.model_version if key!='caption_only' else "control@"+file_sha256(args.output/"caption-only.joblib")[:16]}
+        if key != 'caption_only':
+            without_marks=[]
+            for row in test:
+                result=model.classify(strip_source_marks(row["text"]))
+                without_marks.append([result['scores'][n] for n in NAMES])
+            without_marks=np.asarray(without_marks)
+            report["models"][key]["source_marks_ablation"] = {"test":metrics(without_marks,test),
+                "mean_absolute_score_change":dict(zip(NAMES,np.abs(without_marks-prediction).mean(axis=0).tolist())),
+                "purpose":"diagnostic only; no checkpoint, winner or threshold changes from test"}
         errors=[]
         for i,row in enumerate(test):
             for col,name in enumerate(NAMES):
@@ -231,11 +275,9 @@ def main():
                     errors.append({"sha":row["sha"],"feature":name,"label":row["labels"][name],"score":float(prediction[i,col])})
         (args.output/f"{key}-test-errors.json").write_text(json.dumps(errors,ensure_ascii=False,indent=2),encoding="utf-8")
         if selected and selected["model_key"]==key:
-            ix=[i for i,r in enumerate(test) if all(r["labels"][n] in {"да","нет"} for n in NAMES)]
-            matched=[i for i in ix if prediction[i,0]>=selected["is_joke_threshold"] and prediction[i,1]>=selected["input_has_context_threshold"]]
-            correct=sum(all(test[i]["labels"][n]=='да' for n in NAMES) for i in matched)
-            report["route"]={**selected,"test_matched":len(matched),"test_correct":correct,"test_precision":correct/max(1,len(matched)),"model_version":model.model_version}
-            report["automatic_filter_allowed"]=len(matched)>=50 and correct/max(1,len(matched))>=.90
+            evidence=route_evidence(prediction,test,selected["is_joke_threshold"],selected["input_has_context_threshold"])
+            report["route"]={**selected,**{"test_"+k:v for k,v in evidence.items()},"model_version":model.model_version}
+            report["automatic_filter_allowed"]=evidence["matched"]>=50 and evidence["precision"]>=.90
         del model;gc.collect()
     (args.output/"evaluation.json").write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding="utf-8")
     print(json.dumps({"models_saved":True,"quality_gate":report["automatic_filter_allowed"]}),flush=True)
