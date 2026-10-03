@@ -167,6 +167,8 @@ services:
     networks: [backend, edge]
     volumes:
       - ./media:/app/media:ro
+      - ./models:/app/models:ro
+      - ./cache/ocr-previews:/app/cache/ocr-previews:ro
       - ./secrets/max_bot_token:/run/secrets/max_bot_token:ro
     mem_limit: 256m
     cpus: 0.25

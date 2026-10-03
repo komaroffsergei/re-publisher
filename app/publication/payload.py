@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import mimetypes
 from collections import Counter
@@ -27,7 +28,7 @@ def text_units(text: str) -> int:
     return len(text.encode('utf-16-le')) // 2
 
 
-def split_text(text: str, limit: int = TEXT_LIMIT) -> list[str]:
+def split_text(text: str, limit: int = TEXT_LIMIT, *, html_escaped: bool = False) -> list[str]:
     if limit < 2:
         raise ValueError('Text limit must fit a Unicode character')
     chunks = []
@@ -35,7 +36,8 @@ def split_text(text: str, limit: int = TEXT_LIMIT) -> list[str]:
         low, high = 0, len(text)
         while low < high:
             middle = (low + high + 1) // 2
-            if text_units(text[:middle]) <= limit:
+            candidate = html.escape(text[:middle], quote=False) if html_escaped else text[:middle]
+            if text_units(candidate) <= limit:
                 low = middle
             else:
                 high = middle - 1
@@ -91,17 +93,24 @@ def source_fingerprint(posts):
         for p in sorted(posts, key=lambda p: p.message_id)])
 
 
-def embedded_links(post):
-    result = []
-    text = post.text or ''
-    for entity in (post.raw or {}).get('entities') or []:
-        url = entity.get('url')
-        if not isinstance(url, str) or not url.startswith(('https://', 'http://')) or url in text or url in result:
-            continue
-        # В Telegram «тут» может быть скрытой ссылкой. Сохраняем её отдельной
-        # строкой: исходный текст остаётся неизменным, ссылка не исчезает.
-        result.append(url)
-    return result
+SOURCE_LABEL = 'Источник'
+
+
+def formatted_text(text: str, source_url: str) -> str:
+    """HTML нужен только для ссылки на оригинал. Текст автора — обычный текст."""
+    if not text.endswith(SOURCE_LABEL):
+        raise PreparationError('Ссылка на источник должна завершать публикацию')
+    from urllib.parse import urlsplit
+    parsed = urlsplit(source_url)
+    if parsed.scheme != 'https' or parsed.hostname != 't.me' or parsed.username or parsed.password:
+        raise PreparationError('Некорректная ссылка на оригинал Telegram')
+    return (html.escape(text[:-len(SOURCE_LABEL)], quote=False)
+            + '<i><a href="' + html.escape(source_url, quote=True) + '">' + SOURCE_LABEL + '</a></i>')
+
+
+def has_source_link(message: dict, source_url: str) -> bool:
+    return any(item.get('type') == 'link' and item.get('url') == source_url
+               for item in (message.get('body') or {}).get('markup') or [])
 
 
 def build_snapshot(posts, chat, source_url: str, media_dir: str, *, allow_ocr_media_only: bool = False) -> dict:
@@ -118,13 +127,11 @@ def build_snapshot(posts, chat, source_url: str, media_dir: str, *, allow_ocr_me
     if not captions and (not allow_ocr_media_only or not any(p.media_type for p in ordered)):
         raise PreparationError('Только медиа: требуется ручной разбор темы')
     original = '\n\n'.join(captions)
-    links = list(dict.fromkeys(url for post in ordered for url in embedded_links(post)))
     # OCR определяет тему, но не дописывается в публикацию вместо оригинала.
-    text = '\n\n'.join(part for part in [original,
-        'Ссылки из поста:\n' + '\n'.join(links) if links else '', 'Источник: ' + source_url] if part)
+    text = '\n\n'.join(part for part in [original, SOURCE_LABEL] if part)
     attachments = [media_manifest(post, media_dir) for post in ordered if post.media_type]
     key = f'{chat.peer_id}:album:{ordered[0].grouped_id}' if ordered[0].grouped_id else f'{chat.peer_id}:message:{ordered[0].message_id}'
-    content = {'text': original, 'links': links, 'media': [{'sha256': m['sha256'], 'type': m['type']} for m in attachments]}
+    content = {'text': original, 'media': [{'sha256': m['sha256'], 'type': m['type']} for m in attachments]}
     return {'source_key': key, 'source_url': source_url, 'text': text,
             'original_text': original, 'original_captions': captions, 'media': attachments,
             'message_ids': [p.message_id for p in ordered], 'content_sha256': sha_json(content),
@@ -141,10 +148,19 @@ def message_parts(snapshot: dict) -> list[dict]:
                 media_groups.append([item])
         else:
             media_groups.append([item])
-    texts = split_text(snapshot['text'])
+    source_url = snapshot.get('source_url')
+    if source_url:
+        # Ссылка целиком остаётся в последней текстовой части. Резерв учитывает
+        # HTML и emoji, поэтому разбиение не режет тег или слово «Источник».
+        footer = formatted_text(SOURCE_LABEL, source_url)
+        texts = split_text(snapshot['original_text'], TEXT_LIMIT - text_units(footer) - 2, html_escaped=True)
+        texts[-1] += ('\n\n' if texts[-1] else '') + SOURCE_LABEL
+    else:
+        texts = split_text(snapshot['text'])  # Уже сохранённые старые запросы.
     count = max(len(texts), len(media_groups), 1)
-    return [{'text': texts[i] if i < len(texts) else '',
-             'media': media_groups[i] if i < len(media_groups) else []}
+    return [dict(text=texts[i] if i < len(texts) else '',
+                 media=media_groups[i] if i < len(media_groups) else [],
+                 **({'source_url': source_url} if source_url and i == len(texts) - 1 else {}))
             for i in range(count)]
 
 
@@ -186,6 +202,7 @@ def verify_message(message: dict, expected: dict, *, chat_id: int | None = None,
     actual = Counter(a.get('type') for a in (body.get('attachments') or []) if a.get('type') != 'share')
     required = Counter(m['type'] for m in expected['media'])
     return ((body.get('text') or '') == expected['text'] and actual == required
+            and (not expected.get('source_url') or has_source_link(message, expected['source_url']))
             and (mid is None or body.get('mid') == mid)
             and (chat_id is None or (message.get('recipient') or {}).get('chat_id') == chat_id)
             and (receipt is None or receipt_sha256(message) == receipt))

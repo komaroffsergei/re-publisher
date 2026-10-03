@@ -10,7 +10,7 @@ import pytest
 
 from app.publication.max_client import MaxApiError, MaxClient, approved_upload_url
 from app.publication.payload import (PreparationError, build_snapshot, message_parts, receipt_sha256,
-                                     split_text, text_units, uploaded_media_matches, verify_message, sha_json)
+                                     split_text, text_units, uploaded_media_matches, verify_message, sha_json, formatted_text)
 from app.publication.service import gate_error
 from app.publication.review_guard import GUARD_VERSION
 from app.web.publication_routes import require_initial_manifest
@@ -45,17 +45,19 @@ def test_original_whitespace_is_not_removed():
     chat = SimpleNamespace(peer_id=-1001, folder_name='MAX', chat_type='channel')
     snap = build_snapshot([post], chat, 'https://t.me/c/1/2', '.')
     assert snap['original_text'] == post.text
-    assert snap['text'] == post.text + '\n\nИсточник: https://t.me/c/1/2'
+    assert snap['text'] == post.text + '\n\nИсточник'
 
 
-def test_hidden_telegram_links_are_preserved_without_rewriting_caption():
+def test_hidden_telegram_links_are_not_appended_to_original_caption():
     post = SimpleNamespace(id=1, message_id=2, text='Скачать тут', media_type=None, is_deleted=False,
         grouped_id=None, raw={'entities': [{'url': 'https://example.com/source', 'offset': 8, 'length': 3}]},
         media_path=None, media_download_status=None)
     chat = SimpleNamespace(peer_id=-1001, folder_name='MAX', chat_type='channel')
     snap = build_snapshot([post], chat, 'https://t.me/c/1/2', '.')
     assert snap['original_text'] == post.text
-    assert 'https://example.com/source' in snap['text']
+    assert 'https://example.com/source' not in snap['text']
+    assert 'Ссылки из поста' not in snap['text']
+    assert message_parts(snap)[0]['source_url'] == 'https://t.me/c/1/2'
 
 
 def test_empty_and_deleted_album_are_not_silently_published():
@@ -79,7 +81,7 @@ def test_ocr_media_only_keeps_original_attachment_and_source_without_transcript(
         build_snapshot([post], chat, 'https://t.me/c/1/2', str(tmp_path))
     snap = build_snapshot([post], chat, 'https://t.me/c/1/2', str(tmp_path), allow_ocr_media_only=True)
     assert snap['original_text'] == '' and snap['original_captions'] == []
-    assert snap['text'] == 'Источник: https://t.me/c/1/2'
+    assert snap['text'] == 'Источник'
     assert snap['media'][0]['path'] == str(image)
     assert message_parts(snap)[0]['media'] == snap['media']
     image.unlink()
@@ -252,3 +254,55 @@ async def test_mid_prefix_is_valid_and_internal_upload_metadata_is_not_sent():
         assert body['attachments'] == [{'type': 'image', 'payload': {'token': 'upload'}}]
         assert body['notify'] is True
     finally: await client.aclose()
+
+
+def test_source_is_one_small_link_and_original_html_is_literal():
+    text = '<b>Автор & ссылка https://example.com</b>🙂\n\nИсточник'
+    wire = formatted_text(text, 'https://t.me/example/42')
+    assert wire == ('&lt;b&gt;Автор &amp; ссылка https://example.com&lt;/b&gt;🙂\n\n'
+                    '<i><a href="https://t.me/example/42">Источник</a></i>')
+    with pytest.raises(PreparationError):
+        formatted_text(text, 'https://evil.test/42')
+    with pytest.raises(PreparationError):
+        formatted_text('нет подписи', 'https://t.me/example/42')
+
+
+def test_long_original_is_lossless_and_source_never_splits():
+    original = ('Текст🙂 <>&\n' * 1000)
+    parts = message_parts({'text': original + '\n\nИсточник', 'original_text': original,
+                          'source_url': 'https://t.me/example/42', 'media': []})
+    assert ''.join(p['text'] for p in parts) == original + '\n\nИсточник'
+    assert sum('source_url' in p for p in parts) == 1
+    assert 'source_url' in parts[-1]
+    for p in parts:
+        wire = formatted_text(p['text'], p['source_url']) if p.get('source_url') else p['text']
+        assert text_units(wire) <= 4000
+
+
+def test_readback_requires_original_source_hyperlink():
+    expected = {'text': 'Оригинал\n\nИсточник', 'media': [], 'source_url': 'https://t.me/example/42'}
+    message = {'body': {'text': expected['text'], 'attachments': [],
+                       'markup': [{'type': 'link', 'url': expected['source_url']}]}}
+    assert verify_message(message, expected)
+    message['body']['markup'][0]['url'] = 'https://t.me/wrong/1'
+    assert not verify_message(message, expected)
+    message['body']['markup'] = []
+    assert not verify_message(message, expected)
+
+
+async def test_max_send_formats_only_source_and_keeps_attachment():
+    seen = []
+    def handler(request):
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json={'message': {'body': {'mid': 'mid.formatted'}}})
+    client = MaxClient('secret', client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    try:
+        await client.send(-1, '<b>Оригинал & 🙂</b>\n\nИсточник',
+                          [{'type': 'image', 'payload': {'token': 'upload'}}],
+                          source_url='https://t.me/example/42')
+        assert seen[0]['format'] == 'html'
+        assert seen[0]['attachments'] == [{'type': 'image', 'payload': {'token': 'upload'}}]
+        assert '<b>' not in seen[0]['text']
+        assert '<i><a href="https://t.me/example/42">Источник</a></i>' in seen[0]['text']
+    finally:
+        await client.aclose()

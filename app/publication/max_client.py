@@ -158,10 +158,15 @@ class MaxClient:
             raise MaxApiError(None, 'missing_media_token')
         return {'type': media['type'], 'payload': {'token': token}, '_identity': identity}
 
-    async def send(self, chat_id: int, text: str, attachments: list, reply_mid: str | None = None) -> dict:
-        if text_units(text) > TEXT_LIMIT:
+    async def send(self, chat_id: int, text: str, attachments: list, reply_mid: str | None = None,
+                   *, source_url: str | None = None) -> dict:
+        from app.publication.payload import formatted_text
+        wire_text = formatted_text(text, source_url) if source_url else text
+        if text_units(wire_text) > TEXT_LIMIT:
             raise PreparationError('Текст не был разделён на допустимые части')
-        body = {'text': text or None, 'attachments': [{'type': a['type'], 'payload': a['payload']} for a in attachments], 'notify': True}
+        body = {'text': wire_text or None, 'attachments': [{'type': a['type'], 'payload': a['payload']} for a in attachments], 'notify': True}
+        if source_url:
+            body['format'] = 'html'
         if reply_mid:
             body['link'] = {'type': 'reply', 'mid': reply_mid}
         data = await self.request('POST', '/messages', params={'chat_id': chat_id, 'disable_link_preview': True}, json=body)

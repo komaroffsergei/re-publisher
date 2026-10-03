@@ -52,10 +52,12 @@ class FakeMax:
     """Transport fixture only; never used by application runtime."""
     def __init__(self): self.sent = []
     async def identity(self): return 123
-    async def send(self, chat_id, text, attachments, reply_mid=None):
+    async def send(self, chat_id, text, attachments, reply_mid=None, *, source_url=None):
         message = {'body': {'mid': 'mid.' + str(len(self.sent) + 1), 'text': text, 'attachments': []},
                    'recipient': {'chat_id': chat_id}, 'url': 'https://max.ru/qa/1'}
         self.sent.append(message)
+        if source_url:
+            message['body']['markup'] = [{'type': 'link', 'url': source_url}]
         return message
     async def get_message(self, mid): return next(m for m in self.sent if m['body']['mid'] == mid)
 
@@ -211,7 +213,7 @@ async def test_captionless_media_requires_current_matching_ocr_before_publicatio
         route = await session.get(MaxPublicationRoute, route_id)
         snapshot = await prepare(session, entry_id, route, settings.media_dir)
         assert snapshot['original_text'] == ''
-        assert snapshot['text'] == 'Источник: ' + entry.marked_source_url
+        assert snapshot['text'] == 'Источник'
         assert len(snapshot['media']) == 1
         assert 'размножаются' not in snapshot['text']
         Image.new('RGB', (20, 20), 'black').save(path)
@@ -226,7 +228,7 @@ async def test_restart_with_mid_rechecks_without_sending(db, client):
         delivery_id = await enqueue_delivery(session, entry_id, await session.get(MaxPublicationRoute, route_id), '.')
         await session.flush()
         part = await session.scalar(select(MaxPublicationPart))
-        message = await api.send(-1, part.request['text'], [])
+        message = await api.send(-1, part.request['text'], [], source_url=part.request.get('source_url'))
         part.mid, part.status = message['body']['mid'], 'sent'
         await session.commit()
     await process_one(db, api, '.')

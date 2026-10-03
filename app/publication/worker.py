@@ -144,7 +144,8 @@ async def reconcile_unknown(factory, client):
     candidates = [m for m in messages if lower <= int(m['timestamp']) <= upper
                   and (m.get('sender') or {}).get('user_id') in {None, bot_id}
                   and verify_message(m, part.request, chat_id=channel.chat_id)]
-    if (len(candidates) == 1 and part.number == 1 and delivery.source_url in part.request['text']
+    if (len(candidates) == 1 and part.number == 1
+            and (part.request.get('source_url') == delivery.source_url or delivery.source_url in part.request['text'])
             and (not part.request['media'] or uploaded_media_matches(part.attachments, candidates[0]))):
         # Для вложения обязателен постоянный ID. Одного совпадения числа картинок
         # недостаточно, чтобы приписать найденный пост нашей попытке.
@@ -230,7 +231,8 @@ async def send_part(factory, client, part_id, media_dir):
         await session.commit()
         attempt_id = attempt.id
     try:
-        message = await client.send(chat_id, request['text'], attachments, reply_mid)
+        message = await client.send(chat_id, request['text'], attachments, reply_mid,
+                                    source_url=request.get('source_url'))
     except MaxApiError as exc:
         async with factory() as session:
             attempt = await session.get(MaxPublicationAttempt, attempt_id)
