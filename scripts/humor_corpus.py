@@ -121,14 +121,26 @@ def partition(rows, manual_repeat_groups=()):
     return rows
 
 
+def eligible_representatives(rows):
+    """Один реальный вариант на группу, без переноса меток между вариантами.
+
+    Варианты одной шутки могут иметь разную полноту OCR. Выбираем вариант
+    с максимумом известных меток, затем с подтверждённым контекстом.
+    Семантические метки не создаются и не заменяются; sha разрешает ничью.
+    """
+    groups = defaultdict(list)
+    for row in rows:
+        if row["ocr_eligible"] and row.get("tokens", 513) <= 512:
+            groups[row["group_id"]].append(row)
+    return [min(items, key=lambda r: (
+        -sum(r["labels"][name] in {"да", "нет"} for name in NAMES),
+        -(r["labels"]["input_has_context"] == "да"), r["sha"]
+    )) for _, items in sorted(groups.items())]
+
+
 def coverage(rows):
     counts = {part: {"positive": 0, "negative": 0, "context_yes": 0, "context_no": 0} for part in ("train", "validation", "test")}
-    seen = set()
-    for row in rows:
-        key = row["split"], row["group_id"]
-        if key in seen or not row["ocr_eligible"] or row.get("tokens", 513) > 512:
-            continue
-        seen.add(key)
+    for row in eligible_representatives(rows):
         labels, count = row["labels"], counts[row["split"]]
         if labels["input_has_context"] == "да":
             count["context_yes"] += 1

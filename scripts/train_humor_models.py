@@ -22,7 +22,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import precision_recall_fscore_support
 from app.taxonomy.artifact import file_sha256
 from app.ocr.engine import CONTRACT, QUALITY_POLICY
-from scripts.humor_corpus import NAMES, coverage
+from scripts.humor_corpus import NAMES, coverage, eligible_representatives
 
 CONFIG = {"profile":"humor_ocr", "version":"humor_ocr_v1", "categories":[],
     "binary_features":list(NAMES), "feature_names":{"is_joke":"Шутка", "input_has_context":"Хватает контекста"}}
@@ -41,17 +41,13 @@ def dataset(directory):
     rows = [json.loads(line) for line in raw.splitlines()]
     if any(r["provenance"] != "codex_agent" for r in rows):
         raise ValueError("Предсказания не заменяют разметку Codex")
-    groups, selected = {}, []
-    for row in sorted(rows, key=lambda r:r["sha"]):
-        if not row["ocr_eligible"] or row["tokens"] > 512 or not any(row["labels"][n] in {"да","нет"} for n in NAMES):
-            continue
-        key = row["group_id"]
-        if key in groups:
-            previous = groups[key]
-            if previous["split"] != row["split"] or previous["labels"] != row["labels"]:
-                raise ValueError("Группа повторов требует согласованной ручной перепроверки")
-            continue
-        groups[key] = row; selected.append(row)
+    groups = {}
+    for row in rows:
+        previous = groups.setdefault(row["group_id"], row["split"])
+        if previous != row["split"]:
+            raise ValueError("Группа повторов пересекает выборки")
+    selected = [r for r in eligible_representatives(rows)
+                if any(r["labels"][n] in {"да","нет"} for n in NAMES)]
     counts = coverage(selected)
     for split, pos, neg in (("train",1100,1000),("validation",150,150),("test",150,150)):
         if counts[split]["positive"] < pos or counts[split]["negative"] < neg:

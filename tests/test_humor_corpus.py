@@ -24,7 +24,7 @@ def test_scripts_reject_prediction_labels_and_incomplete_quota(tmp_path):
 
 
 def test_unclear_labels_low_confidence_and_incomplete_albums_do_not_fill_quota():
-    rows = [{"split":"train", "group_id":str(i), "ocr_eligible":eligible, "tokens":20,
+    rows = [{"sha":str(i), "split":"train", "group_id":str(i), "ocr_eligible":eligible, "tokens":20,
         "labels":{"is_joke":joke, "input_has_context":context}} for i, (eligible,joke,context) in enumerate([
             (True,"да","да"), (True,"неясно","да"), (True,"да","неясно"), (False,"да","да"), (True,"нет","да")])]
     count = corpus.coverage(rows)["train"]
@@ -74,3 +74,13 @@ def test_low_confidence_short_line_does_not_count_toward_corpus_quota(tmp_path):
         "is_joke":"да","input_has_context":"да","reason":"fixture","annotator":"Codex /root"}),encoding="utf-8")
     rows, _ = corpus.assemble([raw],[labels])
     assert not rows[0]["ocr_eligible"]
+
+
+def test_group_keeps_a_real_informative_variant_without_copying_its_labels():
+    rows = [{"sha":"a", "group_id":"family", "split":"train", "tokens":20,"ocr_eligible":True,
+        "labels":{"is_joke":"неясно","input_has_context":"нет"}},
+        {"sha":"b", "group_id":"family", "split":"train", "tokens":20,"ocr_eligible":True,
+        "labels":{"is_joke":"да","input_has_context":"да"}}]
+    assert corpus.eligible_representatives(rows) == [rows[1]]
+    assert rows[0]["labels"]["is_joke"] == "неясно"
+    assert corpus.coverage(rows)["train"]["positive"] == 1
