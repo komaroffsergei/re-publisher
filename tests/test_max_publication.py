@@ -10,7 +10,8 @@ import pytest
 
 from app.publication.max_client import MaxApiError, MaxClient, approved_upload_url
 from app.publication.payload import (PreparationError, build_snapshot, message_parts, receipt_sha256,
-                                     split_text, text_units, uploaded_media_matches, verify_message, sha_json, formatted_text)
+                                     split_text, text_units, uploaded_media_matches, verify_message, sha_json, formatted_text,
+                                     original_matches_snapshot)
 from app.publication.service import gate_error
 from app.publication.review_guard import GUARD_VERSION
 from app.web.publication_routes import require_initial_manifest
@@ -306,3 +307,35 @@ async def test_max_send_formats_only_source_and_keeps_attachment():
         assert '<i><a href="https://t.me/example/42">Источник</a></i>' in seen[0]['text']
     finally:
         await client.aclose()
+
+
+def test_source_metadata_refresh_is_not_an_edit_but_new_bytes_are(tmp_path):
+    from PIL import Image
+    path = tmp_path / 'source.png'
+    Image.new('RGB', (20, 20), 'white').save(path)
+    post = SimpleNamespace(id=1, message_id=2, text='Подпись', media_type='MessageMediaPhoto',
+        is_deleted=False, grouped_id=None, raw={'media': {'file_reference': 'old'}},
+        media_path=str(path), media_download_status='downloaded')
+    chat = SimpleNamespace(peer_id=-1001, folder_name='MAX', chat_type='channel')
+    snapshot = build_snapshot([post], chat, 'https://t.me/source/2', str(tmp_path))
+    post.raw['media']['file_reference'] = 'refreshed'
+    assert original_matches_snapshot([post], snapshot, str(tmp_path))
+    Image.new('RGB', (20, 20), 'black').save(path)
+    assert not original_matches_snapshot([post], snapshot, str(tmp_path))
+    path.unlink()
+    assert not original_matches_snapshot([post], snapshot, str(tmp_path))
+
+
+def test_album_content_check_keeps_caption_order_and_detects_deletion():
+    posts = [SimpleNamespace(id=i, message_id=i, text='Повтор' if i < 3 else 'Текст',
+        media_type=None, is_deleted=False, grouped_id=1, raw={}, media_path=None,
+        media_download_status=None) for i in range(1, 4)]
+    chat = SimpleNamespace(peer_id=-1001, folder_name='MAX', chat_type='channel')
+    snapshot = build_snapshot(posts, chat, 'https://t.me/source/1', '.')
+    assert original_matches_snapshot(list(reversed(posts)), snapshot, '.')
+    posts[2].text = 'Новая подпись'
+    assert not original_matches_snapshot(posts, snapshot, '.')
+    posts[2].text = 'Текст'
+    assert not original_matches_snapshot(posts[:-1], snapshot, '.')
+    posts[0].is_deleted = True
+    assert not original_matches_snapshot(posts, snapshot, '.')

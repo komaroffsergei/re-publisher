@@ -21,7 +21,7 @@ from app.db import create_engine, create_session_factory
 from app.models import (MaxChannel, MaxPublicationAttempt, MaxPublicationDelivery,
                         MaxPublicationPart, MaxPublicationRoute, PipelineEntry, TelegramPost)
 from app.publication.max_client import MaxApiError, MaxClient
-from app.publication.payload import PreparationError, receipt_sha256, verify_message, sha_json, uploaded_media_matches, source_fingerprint
+from app.publication.payload import PreparationError, receipt_sha256, verify_message, sha_json, uploaded_media_matches, source_fingerprint, original_matches_snapshot
 from app.publication.service import (finish_delivery, now, prepare, queue_new,
                                      record_history, refresh_channel)
 from app.runtime_status import heartbeat
@@ -295,8 +295,10 @@ async def watch_source_changes(factory, cursor=0):
             posts = list((await session.execute(select(TelegramPost).where(
                 TelegramPost.chat_peer_id == post.chat_peer_id, TelegramPost.grouped_id == post.grouped_id)
                 .order_by(TelegramPost.message_id))).scalars()) if post.grouped_id is not None else [post]
-            if (post.is_deleted or text_sha256(post.text) != delivery.text_sha256
-                    or source_fingerprint(posts) != delivery.snapshot.get('source_fingerprint')):
+            metadata_changed = source_fingerprint(posts) != delivery.snapshot.get('source_fingerprint')
+            original_changed = (metadata_changed and not await asyncio.to_thread(
+                original_matches_snapshot, posts, delivery.snapshot, get_settings().media_dir))
+            if post.is_deleted or text_sha256(post.text) != delivery.text_sha256 or original_changed:
                 delivery.source_changed_at = now()
         await session.commit()
         return rows[-1][0].id if rows else 0

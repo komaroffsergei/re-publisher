@@ -62,6 +62,25 @@ class FakeMax:
     async def get_message(self, mid): return next(m for m in self.sent if m['body']['mid'] == mid)
 
 
+async def test_telegram_metadata_refresh_does_not_mark_publication_changed(db, client):
+    entry_id, route_id = await ready(db, client)
+    async with db() as session:
+        delivery_id = await enqueue_delivery(session, entry_id,
+            await session.get(MaxPublicationRoute, route_id), '.')
+        await session.commit()
+    await process_one(db, FakeMax(), '.')
+    async with db() as session:
+        entry = await session.get(PipelineEntry, entry_id)
+        post = await session.get(TelegramPost, entry.source_post_id)
+        post.raw = dict(post.raw or {}, media={'file_reference': 'refreshed Telegram metadata'})
+        await session.commit()
+    await watch_source_changes(db)
+    async with db() as session:
+        delivery = await session.get(MaxPublicationDelivery, delivery_id)
+        assert delivery.status == 'delivered'
+        assert delivery.source_changed_at is None
+
+
 async def test_review_hold_survives_polling_and_never_creates_send_parts(db, client):
     entry_id, route_id = await ready(db, client)
     async with db() as session:

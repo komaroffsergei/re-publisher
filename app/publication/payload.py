@@ -93,6 +93,27 @@ def source_fingerprint(posts):
         for p in sorted(posts, key=lambda p: p.message_id)])
 
 
+def original_matches_snapshot(posts, snapshot: dict, media_dir: str) -> bool:
+    """Telegram обновляет file_reference без изменения видео или картинки.
+
+    Для опубликованного поста сравниваем подписи, состав альбома и сами файлы.
+    Служебная смена метаданных не считается правкой оригинального содержания.
+    """
+    ordered = sorted(posts, key=lambda p: p.message_id)
+    if any(p.is_deleted for p in ordered) or [p.message_id for p in ordered] != snapshot['message_ids']:
+        return False
+    captions = list(dict.fromkeys(p.text for p in ordered if (p.text or '').strip()))
+    if captions != snapshot['original_captions']:
+        return False
+    try:
+        media = [media_manifest(p, media_dir) for p in ordered if p.media_type]
+    except (PreparationError, OSError):
+        return False
+    fields = ('post_id', 'sha256', 'type')
+    return ([tuple(m[k] for k in fields) for m in media]
+            == [tuple(m[k] for k in fields) for m in snapshot['media']])
+
+
 SOURCE_LABEL = 'Источник'
 
 
