@@ -85,6 +85,11 @@ async def advance(session, entry, post, chat, versions, settings):
         entry.auto_retry_at = now + timedelta(seconds=30)
         entry.last_error = "Нет активных фильтров"
         return
+    if not (post.text or "").strip() and not manual and not any(
+        required_sources(version) & {"ocr", "combined"} for version in versions):
+        await mark_without_text(session, entry, post)
+        entry.auto_state = "done"
+        return
     matched, problems = False, []
     for version in ([] if manual else versions):
         # Длина известна до inference. Ложная ветка И не запускает лишний OCR.
@@ -124,7 +129,10 @@ async def advance(session, entry, post, chat, versions, settings):
         values = await evaluate_post(session, entry, post, version, f"auto:{text_sha256(post.text)}", inputs)
         matched = matched or values["outcome"] == "matched"
     if not matched and not manual and problems:
+        exhausted = entry.auto_attempts >= 3
         failure(entry, "ocr", "; ".join(dict.fromkeys(problems)))
+        if exhausted:
+            entry.auto_state = "stopped"
         return
     if not (post.text or "").strip() and not any(j.status == "complete" for j in jobs.values()) and not manual:
         await mark_without_text(session, entry, post)

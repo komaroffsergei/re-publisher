@@ -76,18 +76,6 @@ async def mark_source(session, entry, post, chat, manual=False):
 async def readiness_error(session, entry, post, media_dir):
     if post.is_deleted:
         return "Исходное сообщение удалено"
-    from app.config import get_settings
-    from app.ocr.jobs import classification_input_current
-    from app.taxonomy.profiles import source_of
-    jobs = list((await session.execute(select(TaxonomyClassification).where(
-        TaxonomyClassification.pipeline_entry_id == entry.id))).scalars())
-    if jobs:
-        valid = False
-        for job in jobs:
-            if job.status in {"complete", "media_only"} and (source_of(job) == "ocr" or job.text_sha256 == text_sha256(post.text)):
-                valid = valid or await classification_input_current(session, post, job, get_settings())
-        if not valid:
-            return "OCR или медиа изменились; обновите классификацию"
     if not entry.marked_source_url or entry.marked_text_sha256 != text_sha256(
         post.text
     ):
@@ -104,6 +92,18 @@ async def readiness_error(session, entry, post, media_dir):
         (datetime.now(timezone.utc) - p.updated_at).total_seconds() < 5 for p in posts
     ):
         return "Альбом ещё собирается"
+    from app.config import get_settings
+    from app.ocr.jobs import classification_input_current
+    from app.taxonomy.profiles import source_of
+    jobs = list((await session.execute(select(TaxonomyClassification).where(
+        TaxonomyClassification.pipeline_entry_id == entry.id))).scalars())
+    if jobs:
+        valid = False
+        for job in jobs:
+            if job.status in {"complete", "media_only"} and (source_of(job) == "ocr" or job.text_sha256 == text_sha256(post.text)):
+                valid = valid or await classification_input_current(session, post, job, get_settings())
+        if not valid:
+            return "OCR или медиа изменились; обновите классификацию"
     for item in posts:
         if item.media_type and downloaded_media_path(item, media_dir) is None:
             return f"Медиа сообщения {item.message_id} недоступно: {item.media_download_status}"
