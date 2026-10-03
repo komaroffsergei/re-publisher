@@ -1,8 +1,8 @@
 """Несколько фильтров одного лейбла могут вести в один канал."""
 from alembic import op
 
-revision = '0019'
-down_revision = '0018'
+revision = '0019_multiple_channel_filters'
+down_revision = '0018_separate_ocr_scores'
 branch_labels = None
 depends_on = None
 
