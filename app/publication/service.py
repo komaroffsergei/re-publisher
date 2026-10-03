@@ -31,6 +31,20 @@ def gate_error(route, version) -> str | None:
     if (route.approved_version_id != version.id or gate.get('expression_sha256') != sha_json(version.expression)
             or gate.get('model_key') != version.model_key):
         return 'Изменён фильтр: нужна новая проверка модели'
+    acceptance = gate.get('owner_acceptance')
+    if acceptance is not None:
+        # Владелец может принять экспериментальный маршрут. Это отдельное
+        # решение о публикации, не исправление test и не успешный ML-допуск.
+        try:
+            accepted_at = datetime.fromisoformat(acceptance['accepted_at'])
+        except (TypeError, KeyError, ValueError):
+            return 'Подтверждение экспериментального маршрута повреждено'
+        if (type(acceptance.get('version_id')) is not int or acceptance['version_id'] != version.id or accepted_at.tzinfo is None
+                or not isinstance(acceptance.get('reason'), str)
+                or not 10 <= len(acceptance['reason'].strip()) <= 500
+                or not isinstance(gate.get('model_version'), str) or not gate['model_version'].strip()):
+            return 'Подтверждение экспериментального маршрута повреждено'
+        return policy_error(gate.get('review_policy'))
     train_positive = gate.get('train_positive', 0)
     if (type(matched) is not int or type(correct) is not int or matched < 50
             or not 0 <= correct <= matched or correct / matched < 0.9

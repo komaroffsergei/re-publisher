@@ -57,6 +57,11 @@ class AutomaticInput(BaseModel):
     enabled: bool
 
 
+class OwnerAcceptanceInput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    reason: str = Field(min_length=10, max_length=500)
+
+
 class ConfirmAbsenceInput(BaseModel):
     model_config = ConfigDict(extra='forbid')
     confirmed_absent: bool
@@ -210,6 +215,28 @@ def register_publication_routes(app, require_auth, session_factory, templates):
                 await session.commit()
                 result['batch_id'] = batch.id
             return result
+
+    @router.post('/api/publication/routes/{route_id}/accept-current-filter')
+    async def accept_current_filter(route_id: int, request: Request):
+        data = await input_data(request, OwnerAcceptanceInput)
+        async with session_factory(request)() as session:
+            route = await session.get(MaxPublicationRoute, route_id, with_for_update=True)
+            if not route:
+                raise HTTPException(404, 'Маршрут не найден')
+            rule = await session.get(SelectionFilter, route.filter_id)
+            version = await session.get(SelectionFilterVersion, rule.active_version_id) if rule else None
+            if not rule or not rule.enabled or rule.archived or not version or version.mark_id != route.mark_id:
+                raise HTTPException(409, 'Сначала включи связанный фильтр с тем же лейблом')
+            gate = dict(route.quality_gate or {})
+            if version.model_key != gate.get('model_key') or not gate.get('model_version'):
+                raise HTTPException(409, 'Для смены модели сначала закрепи её фактический артефакт в маршруте')
+            gate.update(expression_sha256=sha_json(version.expression), owner_acceptance={
+                'version_id': version.id, 'accepted_at': now().isoformat(), 'reason': data.reason.strip()})
+            route.quality_gate, route.approved_version_id = gate, version.id
+            if error := gate_error(route, version):
+                raise HTTPException(409, error)
+            await session.commit()
+            return {'route_id': route.id, 'version_id': version.id, 'admission': 'owner_accepted'}
 
     @router.get('/api/publication/batches')
     async def batches(request: Request):

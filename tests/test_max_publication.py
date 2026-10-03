@@ -121,6 +121,35 @@ def test_filter_change_invalidates_quality_gate():
     assert gate_error(route, version)
 
 
+def test_owner_acceptance_does_not_fabricate_quality_or_allow_changed_filter():
+    route, version = valid_gate()
+    route.quality_gate['test_correct'] = 40
+    route.quality_gate['owner_acceptance'] = {
+        'version_id': version.id, 'accepted_at': '2026-10-03T12:00:00+00:00',
+        'reason': 'Владелец разрешил экспериментальный маршрут, качество пока не прошло допуск.'}
+    assert gate_error(route, version) is None
+    assert route.quality_gate['test_correct'] == 40
+    version.id = 2
+    assert gate_error(route, version)
+
+
+@pytest.mark.parametrize('value', [False, {}, {'version_id': 1, 'accepted_at': 'bad'},
+    {'version_id': 1, 'accepted_at': '2026-10-03T12:00:00', 'reason': 'Согласован экспериментальный запуск'},
+    {'version_id': 1, 'accepted_at': '2026-10-03T12:00:00+00:00', 'reason': 'short'}])
+def test_invalid_owner_acceptance_is_rejected(value):
+    route, version = valid_gate()
+    route.quality_gate['owner_acceptance'] = value
+    assert gate_error(route, version)
+
+
+def test_owner_acceptance_keeps_content_review_policy_required():
+    route, version = valid_gate()
+    route.quality_gate['owner_acceptance'] = {'version_id': 1,
+        'accepted_at': '2026-10-03T12:00:00+00:00', 'reason': 'Владелец разрешил экспериментальный запуск'}
+    route.quality_gate['review_policy'] = {}
+    assert gate_error(route, version)
+
+
 def test_initial_batch_is_exactly_180_unique_new_posts():
     rows = [{'channel_id': ch, 'source_key': f'p-{i}', 'content_sha256': f'h-{i}', 'reviewed': True} for ch in range(9) for i in range(20)]
     require_initial_manifest({'items': rows})

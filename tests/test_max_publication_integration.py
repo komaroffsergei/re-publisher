@@ -102,6 +102,28 @@ async def test_review_policy_change_invalidates_frozen_preview(db, client):
         assert await session.scalar(select(func.count(MaxPublicationDelivery.id))) == 0
 
 
+async def test_owner_accepts_failed_model_without_changing_report_or_source_checks(db, client):
+    entry_id, route_id = await ready(db, client)
+    async with db() as session:
+        route = await session.get(MaxPublicationRoute, route_id)
+        route.quality_gate = {**route.quality_gate, 'test_correct': 40}
+        await session.commit()
+        with pytest.raises(PreparationError, match='отложенных совпадений'):
+            await prepare(session, entry_id, route, '.')
+    response = await client.post(f'/api/publication/routes/{route_id}/accept-current-filter', json={
+        'reason': 'Владелец разрешил экспериментальную отправку; модель ещё не прошла допуск.'})
+    assert response.status_code == 200
+    assert response.json()['admission'] == 'owner_accepted'
+    async with db() as session:
+        route = await session.get(MaxPublicationRoute, route_id)
+        assert route.quality_gate['test_correct'] == 40
+        assert route.quality_gate['owner_acceptance']['version_id'] == route.approved_version_id
+        await prepare(session, entry_id, route, '.')
+        route.approved_version_id = None
+        with pytest.raises(PreparationError, match='Изменён фильтр'):
+            await prepare(session, entry_id, route, '.')
+
+
 async def test_outbox_sends_once_and_persists_readback(db, client):
     entry_id, route_id = await ready(db, client)
     async with db() as session:

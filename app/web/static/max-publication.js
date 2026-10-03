@@ -103,7 +103,20 @@
         for (const route of state.routes.filter(r => r.channel_id === channel.id)) {
           const gate = route.quality_gate || {};
           card.append(el('p', `${route.filter_name || `Фильтр #${route.filter_id}`} → ${route.mark_name || `Лейбл #${route.mark_id}`} · ${route.enabled ? 'включён' : 'выключен'}`));
-          card.append(el('p', gate.test_matched ? `${gate.model_key} · ${gate.test_correct}/${gate.test_matched} отложенных совпадений · ${gate.model_version}` : 'Проверенная модель ещё не привязана', 'muted'));
+          if (gate.owner_acceptance) {
+            card.append(el('p', 'Экспериментальный маршрут · разрешён владельцем без пройденного допуска модели', 'notice'));
+            card.append(el('p', gate.owner_acceptance.reason, 'muted'));
+            const accept = el('button', 'Подтвердить текущие условия фильтра'); accept.type = 'button';
+            accept.onclick = () => {
+              if (window.confirm('Разрешить текущую версию фильтра без нового ML-допуска? Результаты проверки качества останутся прежними.')) {
+                action(accept, () => api(`/api/publication/routes/${route.id}/accept-current-filter`, {
+                  reason: 'Владелец вручную подтвердил текущие условия экспериментального фильтра; новый допуск модели не заявляется.'}));
+              }
+            };
+            card.append(accept);
+          }
+          card.append(el('p', gate.test_matched ? `${gate.model_key} · прежний test: ${gate.test_correct}/${gate.test_matched} совпадений · ${gate.model_version}` : `${gate.model_key || 'Модель'} · test этого маршрута не подтверждён · ${gate.model_version || 'артефакт не привязан'}`, 'muted'));
+          if (gate.validation_matched) card.append(el('p', `Validation: ${gate.validation_correct}/${gate.validation_matched} · ${gate.reason || ''}`, 'muted'));
         }
         if (channel.error) card.append(el('p', channel.error, 'notice error'));
         const check = el('button', channel.check_requested ? 'Проверка в очереди' : 'Проверить права и историю');
