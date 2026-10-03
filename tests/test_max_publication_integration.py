@@ -142,6 +142,32 @@ async def test_outbox_sends_once_and_persists_readback(db, client):
         assert part.mid == 'mid.1' and part.verified_at
 
 
+async def test_two_filters_can_share_label_and_channel_without_duplicate_delivery(db, client):
+    entry_id, route_id = await ready(db, client)
+    async with db() as session:
+        first = await session.get(MaxPublicationRoute, route_id)
+        mark_id, channel_id = first.mark_id, first.channel_id
+    second_rule = await shared.save_rule(client, mark_id)
+    await shared.flush_apps(db)
+    async with db() as session:
+        first = await session.get(MaxPublicationRoute, route_id)
+        version = await session.get(SelectionFilterVersion, second_rule['version_id'])
+        second = MaxPublicationRoute(mark_id=mark_id, channel_id=channel_id,
+            filter_id=second_rule['id'], enabled=True, approved_version_id=version.id,
+            quality_gate={**first.quality_gate, 'expression_sha256': sha_json(version.expression)})
+        session.add(second)
+        await session.flush()
+        assert await enqueue_delivery(session, entry_id, first, '.') is not None
+        assert await enqueue_delivery(session, entry_id, second, '.') is None
+        await session.commit()
+    response = await client.post('/api/publication/routes', json={
+        'mark_id': mark_id, 'filter_id': second_rule['id'], 'channel_id': channel_id, 'enabled': False})
+    assert response.status_code == 409
+    async with db() as session:
+        assert await session.scalar(select(func.count(MaxPublicationRoute.id))) == 2
+        assert await session.scalar(select(func.count(MaxPublicationDelivery.id))) == 1
+
+
 async def test_captionless_media_requires_current_matching_ocr_before_publication(db, client, tmp_path):
     """OCR разрешает тему, но в MAX сохраняется исходное вложение без транскрипта."""
     from PIL import Image

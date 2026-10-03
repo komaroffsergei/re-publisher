@@ -769,7 +769,9 @@ class MaxChannel(TimestampMixin, Base):
 
 class MaxPublicationRoute(TimestampMixin, Base):
     __tablename__ = 'max_publication_routes'
-    __table_args__ = (UniqueConstraint('mark_id', 'channel_id', name='uq_max_route_mark_channel'),)
+    # Несколько фильтров могут назначать один лейбл в один канал.
+    # Повторная доставка одного источника блокируется отдельно в outbox.
+    __table_args__ = (UniqueConstraint('filter_id', 'channel_id', name='uq_max_route_filter_channel'),)
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     mark_id: Mapped[int] = mapped_column(ForeignKey('filter_marks.id'), nullable=False)
     filter_id: Mapped[int] = mapped_column(ForeignKey('selection_filters.id'), nullable=False)

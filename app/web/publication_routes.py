@@ -182,6 +182,12 @@ def register_publication_routes(app, require_auth, session_factory, templates):
             if (not await session.get(MaxChannel, data.channel_id) or not await session.get(FilterMark, data.mark_id)
                     or not await session.get(SelectionFilter, data.filter_id)):
                 raise HTTPException(409, 'Канал, лейбл или фильтр не найден')
+            duplicate = await session.scalar(select(MaxPublicationRoute.id).where(
+                MaxPublicationRoute.filter_id == data.filter_id,
+                MaxPublicationRoute.channel_id == data.channel_id,
+                MaxPublicationRoute.id != (route_id or 0)))
+            if duplicate is not None:
+                raise HTTPException(409, 'Этот фильтр уже связан с каналом')
             if route_id and (route.filter_id != data.filter_id or route.mark_id != data.mark_id):
                 route.approved_version_id, route.quality_gate = None, {}
             for key, value in data.model_dump().items():
