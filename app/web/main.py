@@ -525,9 +525,15 @@ def register_routes(app: FastAPI) -> None:
             public_runs = [public_run(run, row[0].text) for run in runs[:50]]
             if any(profile_of(run) == "humor_ocr" for run in runs[:50]):
                 from app.ocr.jobs import current_input
+                from app.ocr.models import OcrRun
                 value, ocr_run = await current_input(session, entry_id, row[0], request.app.state.settings)
+                ocr_ids = {run.ocr_run_id for run in runs[:50] if run.ocr_run_id is not None}
+                durations = dict((await session.execute(
+                    select(OcrRun.id, OcrRun.elapsed_ms).where(OcrRun.id.in_(ocr_ids))
+                )).all()) if ocr_ids else {}
                 for item, run in zip(public_runs, runs[:50]):
                     item["is_current_input"] = item["is_current_text"] and (profile_of(run) == "taxonomy" or value is not None and ocr_run is not None and run.input_sha256 == ocr_run.input_sha256)
+                    item["ocr_elapsed_ms"] = durations.get(run.ocr_run_id)
             return {
                 "runs": public_runs,
                 "next_before_id": runs[49].id if has_more else None,

@@ -86,6 +86,7 @@
   }
 
   function renderComparison(root, leftRun, rightRun) {
+    const humor = root.querySelector("[data-compare-profile]").value === "humor_ocr";
     const output = root.querySelector("[data-compare-output]");
     output.replaceChildren();
     if (!leftRun && !rightRun) {
@@ -131,7 +132,7 @@
           "compare-section-title",
           section === "categories"
             ? "Категории и подкатегории"
-            : "Обязательные признаки",
+            : humor ? "Профиль юмора" : "Обязательные признаки",
         ),
       );
       for (const id of new Set([...left.keys(), ...right.keys()]))
@@ -141,7 +142,7 @@
       element(
         "p",
         "compare-footer",
-        `Сложность: ${leftRun?.result?.technical_complexity ?? "—"} / ${rightRun?.result?.technical_complexity ?? "—"} · Время: ${leftRun?.elapsed_ms ?? "—"} / ${rightRun?.elapsed_ms ?? "—"} мс`,
+        `${humor ? "" : `Сложность: ${leftRun?.result?.technical_complexity ?? "—"} / ${rightRun?.result?.technical_complexity ?? "—"} · `}Классификация: ${leftRun?.elapsed_ms ?? "—"} / ${rightRun?.elapsed_ms ?? "—"} мс${humor ? ` · OCR: ${leftRun?.ocr_elapsed_ms ?? "—"} / ${rightRun?.ocr_elapsed_ms ?? "—"} мс` : ""}`,
       ),
     );
   }
@@ -167,6 +168,7 @@
 
   function render(root) {
     const profile = root.querySelector("[data-compare-profile]").value;
+    root.querySelector("[data-compare-all]").closest("label").hidden = profile === "humor_ocr";
     const runs = (root.taxonomyRuns || []).filter(run => (run.profile || "taxonomy") === profile);
     root.taxonomyCatalog = root.taxonomyCatalogs?.[profile]?.labels || [];
     root.querySelector("[data-compare-count]").textContent =

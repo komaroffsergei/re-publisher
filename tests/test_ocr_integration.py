@@ -70,6 +70,10 @@ async def test_ocr_empty_caption_queues_only_requested_profile_and_retains_taxon
         assert all(j.status == "complete" for j in jobs if j.profile == "taxonomy")
     data = (await client.get(f"/api/pipeline/{entry_id}/ocr")).json()
     assert data["status"] == "complete" and data["runs"][0]["current"]
+    history = (await client.get(f"/api/pipeline/{entry_id}/taxonomy-runs")).json()["runs"]
+    humor_run = next(item for item in history if item["profile"] == "humor_ocr")
+    assert humor_run["ocr_elapsed_ms"] == data["runs"][0]["elapsed_ms"]
+    assert all(item["ocr_elapsed_ms"] is None for item in history if item["profile"] == "taxonomy")
     assert (await client.post(f"/api/pipeline/{entry_id}/ocr", json={}, auth=None)).status_code == 401
     assert (await client.post(f"/api/pipeline/{entry_id}/ocr", json={}, headers={"Origin":"https://outside.invalid"})).status_code == 403
 
