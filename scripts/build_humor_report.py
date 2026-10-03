@@ -126,12 +126,30 @@ def main():
     else:
         value=json.loads(evaluations[-1].read_text(encoding='utf-8'))
         sections.append('<p>Измеряется согласие с разметкой Codex, не независимая человеческая точность. Порог и победитель выбраны на validation до чтения test. «Неясно» маскируется при обучении, но не исчезает из знаменателя проверки автоматического маршрута.</p>')
+        selected=value.get('route')
+        if selected:
+            sections.append('<h3>Допуск совместного условия</h3><p>Выбрано на validation: '+E(selected['model_key'])+'; Шутка ≥ '+f'{selected["is_joke_threshold"]*100:.0f}%'+', Хватает контекста ≥ '+f'{selected["input_has_context_threshold"]*100:.0f}%'+'. Проверяются оба условия через И.</p>')
+            sections.append(table(['Выборка','Совпадений','Подтверждено да/да','Известные ошибки','Неясно','Подтверждённая доля'],[
+                ('validation',str(selected['matched']),str(selected['correct']),str(selected['confirmed_wrong']),str(selected['unresolved']),f'{selected["precision"]*100:.1f}%'),
+                ('test',str(selected['test_matched']),str(selected['test_correct']),str(selected['test_confirmed_wrong']),str(selected['test_unresolved']),f'{selected["test_precision"]*100:.1f}%')]))
+            sections.append('<p class="verdict">'+('Качество прошло проверку; это только один из допусков. Дополнительно нужны ресурсы и runtime.' if value['automatic_filter_allowed'] else 'Допуск качества не пройден. Победителя и пороги после test не меняли. Автоматический отбор выключен.')+'</p>')
+        else:
+            sections.append('<p class="verdict">На validation не найден маршрут с требуемыми 92% и минимум 50 совпадениями. Автоматический отбор выключен.</p>')
         results=[]
         for key,item in value['models'].items():
             for feature,label in (('is_joke','Шутка'),('input_has_context','Контекст')):
                 m=item['test'][feature]
                 results.append((E(key),E(label),f'{m["precision"]:.3f}',f'{m["recall"]:.3f}',f'{m["f1"]:.3f}',f'{item["local_cpu_p95_seconds"]:.3f} с'))
         sections.append(table(['Модель','Выход','Precision test','Recall test','F1 test','Локальный p95'],results))
+        diagnostic=[]
+        for key,item in value['models'].items():
+            diagnostic.append((E(key), 'Подпись без OCR' if key=='caption_only' else 'Подпись + OCR',f'{item["test"]["is_joke"]["f1"]:.3f}',f'{item["test"]["input_has_context"]["f1"]:.3f}'))
+            ablation=item.get('source_marks_ablation')
+            if ablation:
+                diagnostic.append((E(key),'Без отдельных строк названия канала',f'{ablation["test"]["is_joke"]["f1"]:.3f}',f'{ablation["test"]["input_has_context"]["f1"]:.3f}'))
+        sections.append('<h3>Что добавил OCR и что делает название источника</h3>')
+        sections.append(table(['Модель','Вход','F1: шутка','F1: контекст'],diagnostic))
+        sections.append('<p>Контроль на одной подписи обучен на том же корпусе и разделении. В диагностике отдельно убраны строки водяных знаков и названия канала. Если качество падает, модель использует источник как подсказку. Это ограничивает выводы о новых каналах. Диагностика не использовалась для перенастройки по test.</p>')
         shutil.copyfile(evaluations[-1],assets/'evaluation.json')
         sections.append('<p><a href="assets/evaluation.json">Скачать расчёты</a>. Доля совпадений относится к этому корпусу и разметке Codex. Это не обещание качества на любом новом канале.</p>')
         sections.append('<details><summary>Полный отчёт: пороги, калибровка, срезы и влияние подписей каналов</summary><pre>'+E(json.dumps(value,ensure_ascii=False,indent=2))+'</pre></details>')
