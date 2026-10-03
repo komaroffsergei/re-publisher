@@ -73,6 +73,11 @@ async def test_short_weak_line_blocks_full_input_and_explains_cached_review(db, 
         entry = await session.get(PipelineEntry, entry_id)
         post = await session.get(TelegramPost, entry.source_post_id)
         assert (await current_input(session, entry_id, post, settings))[0] is None
+        # Нет задачи, зависшей в ожидании уже завершённого старого OCR.
+        classification = await enqueue(session, entry_id, "tfidf", "humor_ocr")
+        assert classification.status == "needs_review" and classification.finished_at
+        assert classification.ocr_run_id == run.id and "50%" in classification.error
+        await session.commit()
     data = (await client.get(f"/api/pipeline/{entry_id}/ocr")).json()
     assert data["status"] == "needs_review" and "50%" in data["error"]
 

@@ -155,7 +155,7 @@ async def enqueue(
         or entry.stage not in {"received", "sorted", "filtered", "marking", "ready"}
     ):
         raise HTTPException(409, detail="Карточка недоступна для сортировки")
-    ocr_run, model_input, settings = None, None, None
+    ocr_run, model_input, settings, ocr_problem = None, None, None, None
     if profile == "humor_ocr":
         from app.config import get_settings
         from app.ocr.jobs import enqueue_ocr, current_input
@@ -164,8 +164,10 @@ async def enqueue(
             raise HTTPException(409, "Модель профиля юмора ещё не готова")
         from app.ocr.models import OcrJob
         existing_ocr = await session.get(OcrJob, entry.id)
-        await enqueue_ocr(session, entry, post, settings, retry=bool(existing_ocr and existing_ocr.status in {"failed", "needs_review"}))
+        ocr_job = await enqueue_ocr(session, entry, post, settings, retry=bool(existing_ocr and existing_ocr.status in {"failed", "needs_review"}))
         model_input, ocr_run = await current_input(session, entry.id, post, settings)
+        if model_input is None and ocr_job.status == "needs_review":
+            ocr_problem = ocr_job.error or "OCR требует ручного разбора"
     if profile == "taxonomy" and not (post.text or "").strip():
         return await mark_without_text(session, entry, post)
 
@@ -213,7 +215,7 @@ async def enqueue(
         session.add(job)
     job.text_sha256 = fingerprint
     job.input_sha256 = ocr_run.input_sha256 if profile == "humor_ocr" and model_input is not None else fingerprint if profile == "taxonomy" else None
-    job.ocr_run_id = ocr_run.id if profile == "humor_ocr" and model_input is not None else None
+    job.ocr_run_id = ocr_run.id if profile == "humor_ocr" and ocr_run is not None else None
     # Worker запишет версию фактически загруженных весов. До этого она неизвестна.
     job.model_version = None
     run = TaxonomyRun(
@@ -225,18 +227,20 @@ async def enqueue(
         ocr_run_id=job.ocr_run_id,
         text_sha256=fingerprint,
         model_version=None,
-        status="ocr" if profile == "humor_ocr" and model_input is None else "queued",
+        status="needs_review" if ocr_problem else "ocr" if profile == "humor_ocr" and model_input is None else "queued",
         queued_at=now,
+        error=ocr_problem,
+        finished_at=now if ocr_problem else None,
     )
     session.add(run)
     await session.flush()
     job.current_run_id = run.id
     job.status = run.status
     job.result = None
-    job.error = None
+    job.error = ocr_problem
     job.elapsed_ms = None
     job.started_at = None
-    job.finished_at = None
+    job.finished_at = run.finished_at
     job.updated_at = now
     if entry.stage == "ready":
         entry.stage = "marking"

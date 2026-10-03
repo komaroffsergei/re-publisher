@@ -74,6 +74,15 @@ async def enqueue_ocr(session, entry, post, settings, retry=False):
     source, inputs, error = await snapshot(session, post, settings)
     job = (await session.execute(select(OcrJob).where(OcrJob.entry_id == entry.id).with_for_update())).scalar_one_or_none()
     if job and job.source_sha256 == source and (not retry or job.status in {"queued", "running"}):
+        if job.status in {"complete", "no_text"} and job.current_run_id:
+            from app.ocr.engine import needs_review
+            current = await session.get(OcrRun, job.current_run_id)
+            if current and any(needs_review(r) for r in current.results):
+                # История прежнего запуска сохраняется, но новый запуск модели
+                # не ждёт уже завершённый непригодный OCR бесконечно.
+                job.status = "needs_review"
+                job.error = "Есть строки с оценкой OCR ниже 50%; частичный текст не передаётся модели"
+                job.updated_at = datetime.now(timezone.utc)
         return job
     if job and job.status == "running":
         raise HTTPException(409, "OCR уже выполняется")
