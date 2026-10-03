@@ -82,6 +82,28 @@ async def test_short_weak_line_blocks_full_input_and_explains_cached_review(db, 
     assert data["status"] == "needs_review" and "50%" in data["error"]
 
 
+async def test_ocr_enabled_collector_reconciles_text_post_with_null_media(db, tmp_path, monkeypatch):
+    import app.sync as sync
+    entry_id = await shared.seed(db)
+    settings = configure(tmp_path)
+    async with db() as session:
+        entry = await session.get(PipelineEntry, entry_id)
+        post = await session.get(TelegramPost, entry.source_post_id)
+        post.raw = {"media": None}
+        await session.commit()
+        data = {"chat_peer_id":post.chat_peer_id, "message_id":post.message_id,
+            "text":post.text, "date":post.date, "is_deleted":False, "raw":{"media":None},
+            "media_type":None, "media_path":None, "media_download_status":"missing"}
+        monkeypatch.setattr(sync, "message_to_post_dict", lambda *args, **kwargs: data)
+        message = SimpleNamespace(id=post.message_id, media=None, document=None)
+        chat = SimpleNamespace(peer_id=post.chat_peer_id, entity=None)
+        saved_id, inserted, status = await sync.save_message(None,settings,session,chat,message,
+            collect_comments=False,update_state=False)
+        assert saved_id == post.id and not inserted and status == "missing"
+        await session.commit()
+        assert (await session.execute(select(func.count(PipelineEntry.id)))).scalar_one() == 1
+
+
 async def test_ocr_empty_caption_queues_only_requested_profile_and_retains_taxonomy(db, client, tmp_path):
     entry_id = await shared.seed(db)
     settings = configure(tmp_path)

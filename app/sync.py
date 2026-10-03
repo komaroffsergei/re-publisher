@@ -360,7 +360,8 @@ async def save_message(
         def media_identity(value):
             media = getattr(value, "media", None)
             return getattr(getattr(media, "photo", None), "id", None) or getattr(getattr(media, "document", None), "id", None)
-        raw_media = (previous.raw or {}).get("media", {}) if previous else {}
+        # Telegram явно пишет media: null для текстовых сообщений.
+        raw_media = ((previous.raw or {}).get("media") or {}) if previous else {}
         old_id = (raw_media.get("photo") or raw_media.get("document") or {}).get("id")
         replaced = bool(previous and old_id != media_identity(message))
     media = await download_message_media(settings, message, chat.peer_id, message.id, replace_existing=replaced)
