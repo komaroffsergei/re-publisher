@@ -105,6 +105,8 @@ async def process(factory, settings, reader, entry_id, run_id):
         for item in inputs:
             results.append(await reader.read(item))
         status = "needs_review" if any(needs_review(r) for r in results) else "complete" if compose_input(caption, results) else "no_text"
+        if status == "needs_review":
+            error = "Есть строки с оценкой OCR ниже 50%; частичный текст не передаётся модели"
     except Exception as exc:
         # Не сохраняем полный exception с путями/текстом, только понятную причину.
         status, error = "failed", problem or ("Таймаут OCR" if isinstance(exc, asyncio.TimeoutError) else "Не удалось прочитать вложение")

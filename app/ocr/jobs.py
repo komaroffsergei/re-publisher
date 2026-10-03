@@ -119,9 +119,11 @@ async def public_ocr(session, entry_id, post, settings):
     from app.ocr.engine import needs_review
     current = next((r for r in rows if r.id == job.current_run_id), None)
     status = job.status
+    error = job.error
     if status in {"complete", "no_text"} and current and any(needs_review(r) for r in current.results):
         status = "needs_review"
-    return {"status": status if job.source_sha256 == source else "stale", "error": job.error,
+        error = error or "Есть строки с оценкой OCR ниже 50%; частичный текст не передаётся модели"
+    return {"status": status if job.source_sha256 == source else "stale", "error": error,
             "run_id": job.current_run_id, "runs": [{"id": r.id, "status": r.status,
             "engine_version": r.engine_version, "input_sha256": r.input_sha256,
             "results": r.results, "elapsed_ms": r.elapsed_ms, "error": r.error,

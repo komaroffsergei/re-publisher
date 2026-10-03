@@ -81,7 +81,7 @@ def main():
         from app.taxonomy.inference import TaxonomyModel
         from app.taxonomy.minilm import MiniLmTaxonomyModel
         predictors={'TF-IDF':TaxonomyModel(args.models),'MiniLM':MiniLmTaxonomyModel(args.models)}
-    examples=[]
+    candidates=[]
     for item in raw:
         a=annotations_by_key.get((item['peer'],item['message'],item['input_sha256']))
         if not a or not item.get('file') or item['input_sha256'] not in frozen_inputs:continue
@@ -89,8 +89,14 @@ def main():
         try:
             with Image.open(item['file']) as img:img.verify()
         except (OSError,ValueError):continue
-        examples.append((item,a))
-        if len(examples)==8:break
+        candidates.append((item,a))
+    # Иллюстрации обеих меток, не первые восемь новостей из одного источника.
+    examples=[];seen_media=set()
+    for label,limit in (("да",4),("нет",4)):
+        for item,a in candidates:
+            if a["is_joke"]!=label or item["media_sha256"] in seen_media:continue
+            examples.append((item,a));seen_media.add(item["media_sha256"])
+            if sum(annotation["is_joke"]==label for _,annotation in examples)>=limit:break
     sections.append('<section><h2>Примеры прочтения</h2><p>Подпись, фактический OCR, решение Codex и отдельно оценки загруженных моделей. Примеры иллюстрируют вход; таблица качества ниже считается на отложенном test.</p><div class="examples">')
     for item,a in examples:
         from PIL import Image
@@ -131,7 +137,30 @@ def main():
         samples=value['samples'];maximum=max(r['seconds'] for r in samples)
         bars=''.join(f'<rect x="{i*6}" y="{100-90*r["seconds"]/maximum:.2f}" width="4" height="{90*r["seconds"]/maximum:.2f}" fill="'+('#9333ea' if r['status']=='failed' else '#f97316')+'"/>' for i,r in enumerate(samples))
         sections.append(f'<svg viewBox="0 0 {len(samples)*6} 105" role="img" aria-label="Длительность OCR каждого вложения"><path d="M0 100H{len(samples)*6}" stroke="#333"/>{bars}</svg>')
-    sections.append('</section><section><h2>Что где реализовано</h2>')
+    sections.append('''</section><section><h2>Как пользоваться</h2>
+    <p>Открыть карточку на <a href="https://publisher.komaroff-dev.ru/pipeline">доске Publisher</a>. В выборе профиля поставить «Юмор + OCR», затем нажать стрелку TF‑IDF или MiniLM. Это запуск для одной карточки, без обработки всего старого буфера.</p>
+    <ol><li>Для короткой подписи сначала работает OCR всех известных картинок или превью альбома. На видео берётся статическое превью, а если его нет — первый кадр.</li>
+    <li>В раскрываемом блоке OCR видно прочитанный текст, оценки чтения строк, версию и длительность. Оценка ниже 50% хотя бы у одной строки блокирует смысловую модель. Даже один плохо прочитанный символ не выкидывается молча.</li>
+    <li>После OCR загружается выбранная модель и считает «Шутка» и «Хватает контекста». Вторая стрелка добавляет отдельный результат; первый сохраняется. В сравнении можно посмотреть версии и отдельное время OCR и классификации.</li>
+    <li>Ошибка или ручной разбор видны на карточке. Кнопка повтора запускает новый OCR и сохраняет предыдущий в истории. Она не исправляет буквы самостоятельно.</li>
+    <li>Фильтр профиля юмора проверяет обе оценки через И. «Смешное» — пользовательский лейбл из словаря, а не название оценки модели. При выключенном автоматическом допуске разрешён только ручной запуск и предпросмотр.</li></ol>
+    <p>Подпись длиннее 500 символов классифицируется без OCR. Пустая подпись с читаемой надписью на картинке — обычный вход модели. Без текста после OCR получается «Только медиа»; без вложений — «Пустой».</p>
+    </section><section><h2>Путь одного поста</h2>
+    <div class="flow" role="img" aria-label="Сообщение, проверка вложений, OCR, проверка полного входа, модель, фильтр">
+    <b>Оригинал</b><span>→</span><b>Вложения</b><span>→</span><b>OCR / кеш</b><span>→</span><b>Полный вход</b><span>→</span><b>TF‑IDF / MiniLM</b><span>→</span><b>Фильтр</b></div>
+    <p>Подпись и OCR соединяются разделителями <code>[Подпись]</code> и <code>[Медиа N]</code>. Это отдельная строка для модели. Текст поста в БД сохраняется как был. На маркировку и публикацию идут оригинальный текст, ссылка на источник и исходные вложения.</p>
+    <p>Неполный альбом, недоступное медиа, слабое чтение или больше 512 токенов ведут в ручной разбор. Не отдаём модели только ту часть, которую получилось прочитать. Замена подписи, файла или OCR отзывает актуальность результата.</p>
+    </section><section><h2>Хранение и настройки</h2>''')
+    sections.append(table(['Что','Где','Зачем'],[
+        ('Корпус и решения Codex','<code>publisher-taxonomy-private/humor-ocr-v1</code> на компьютере','Приватные исходники, решения, группы повторов и замороженные выборки; вне Git.'),
+        ('Задания и история OCR','PostgreSQL: <code>ocr_jobs</code>, <code>ocr_runs</code>','Текущее состояние отдельно от запусков; строки, координаты, оценки, SHA и длительность.'),
+        ('Классификация','<code>taxonomy_classifications</code>, <code>taxonomy_runs</code>','Модель и профиль входят в ключ задания. История TF‑IDF и MiniLM сохраняется отдельно.'),
+        ('Модели на VPS','<code>/srv/portfolio/publisher/models</code>','Только артефакты, tokenizer и manifests с контрольными суммами; обучение здесь не запускается.'),
+        ('Превью и кеш','<code>cache/ocr-previews</code>, <code>cache/ocr-results</code>','Превью отделены от исходных вложений, кеш зависит от файла и версии движка.'),
+        ('Настройки профиля','<code>OCR_ENABLED</code>, <code>OCR_MODEL_DIR</code>, <code>HUMOR_MODEL_DIR</code>, <code>HUMOR_AUTO_ENABLED</code>','Файл настроек вне Git. OCR-worker получает только подключение БД и OCR-настройки, без Telegram/MAX.'),
+        ('Откат','<code>/srv/portfolio/publisher/releases</code>','Предыдущие закреплённые образы и конфигурация. История и данные не удаляются, схема не понижается.'),
+    ]))
+    sections.append('<p>MiniLM-worker держит один encoder: при смене профиля выгружает прежний и загружает нужный. OCR работает одной задачей и одним потоком ONNX. Эти ограничения нужны для небольшой VPS, а не для максимальной скорости.</p></section><section><h2>Что где реализовано</h2>')
     acceptance=args.directory/'release-acceptance.json'
     if acceptance.is_file():
         sections.append('<h3>Фактическая проверка выпуска</h3><pre>'+E(acceptance.read_text(encoding='utf-8'))+'</pre>')

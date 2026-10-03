@@ -49,6 +49,34 @@ class Reader:
             "text": "Работаю над багами: они размножаются", "media_sha256": item["sha256"], "engine_version": self.version, "elapsed_ms": 10}
 
 
+async def test_short_weak_line_blocks_full_input_and_explains_cached_review(db, client, tmp_path):
+    entry_id = await shared.seed(db)
+    settings = configure(tmp_path)
+    await media_post(db, entry_id, settings)
+    class WeakReader(Reader):
+        async def read(self, item):
+            result = await super().read(item)
+            result["blocks"].append({"text": "9", "score": .16, "box": [[0,0],[1,0],[1,1],[0,1]]})
+            return result
+    async with db() as session:
+        await enqueue(session, entry_id, "tfidf", "humor_ocr")
+        await session.commit()
+    await process(db, settings, WeakReader(), *(await claim(db)))
+    async with db() as session:
+        job = await session.get(OcrJob, entry_id)
+        run = await session.get(OcrRun, job.current_run_id)
+        assert job.status == run.status == "needs_review" and "50%" in job.error
+        # Старый кеш до ужесточения политики тоже нельзя считать пригодным.
+        job.status = run.status = "complete"
+        job.error = run.error = None
+        await session.commit()
+        entry = await session.get(PipelineEntry, entry_id)
+        post = await session.get(TelegramPost, entry.source_post_id)
+        assert (await current_input(session, entry_id, post, settings))[0] is None
+    data = (await client.get(f"/api/pipeline/{entry_id}/ocr")).json()
+    assert data["status"] == "needs_review" and "50%" in data["error"]
+
+
 async def test_ocr_empty_caption_queues_only_requested_profile_and_retains_taxonomy(db, client, tmp_path):
     entry_id = await shared.seed(db)
     settings = configure(tmp_path)
