@@ -104,7 +104,7 @@ def embedded_links(post):
     return result
 
 
-def build_snapshot(posts, chat, source_url: str, media_dir: str) -> dict:
+def build_snapshot(posts, chat, source_url: str, media_dir: str, *, allow_ocr_media_only: bool = False) -> dict:
     if chat.folder_name != 'MAX' or chat.chat_type != 'channel':
         raise PreparationError('Отправляются только каналы из папки MAX, групповые разговоры исключены')
     ordered = sorted(posts, key=lambda p: p.message_id)
@@ -115,11 +115,13 @@ def build_snapshot(posts, chat, source_url: str, media_dir: str) -> dict:
         caption = post.text or ''
         if caption.strip() and caption not in captions:
             captions.append(caption)
-    if not captions:
+    if not captions and (not allow_ocr_media_only or not any(p.media_type for p in ordered)):
         raise PreparationError('Только медиа: требуется ручной разбор темы')
     original = '\n\n'.join(captions)
     links = list(dict.fromkeys(url for post in ordered for url in embedded_links(post)))
-    text = original + ('\n\nСсылки из поста:\n' + '\n'.join(links) if links else '') + '\n\nИсточник: ' + source_url
+    # OCR определяет тему, но не дописывается в публикацию вместо оригинала.
+    text = '\n\n'.join(part for part in [original,
+        'Ссылки из поста:\n' + '\n'.join(links) if links else '', 'Источник: ' + source_url] if part)
     attachments = [media_manifest(post, media_dir) for post in ordered if post.media_type]
     key = f'{chat.peer_id}:album:{ordered[0].grouped_id}' if ordered[0].grouped_id else f'{chat.peer_id}:message:{ordered[0].message_id}'
     content = {'text': original, 'links': links, 'media': [{'sha256': m['sha256'], 'type': m['type']} for m in attachments]}

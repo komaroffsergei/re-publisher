@@ -102,7 +102,10 @@ async def prepare(session, entry_id: int, route, media_dir: str) -> dict:
         raise PreparationError('В исходном альбоме удалено сообщение: нужна ручная проверка состава')
     if album_primary(items).id != post.id:
         raise PreparationError('Для альбома используется только основная карточка с подписью')
-    snapshot = await asyncio.to_thread(build_snapshot, items, chat, entry.marked_source_url, media_dir)
+    # Совпадение выше уже проверило актуальный OCR и оценки модели. Без этого
+    # пост без подписи по-прежнему не имеет определённой темы для отправки.
+    snapshot = await asyncio.to_thread(build_snapshot, items, chat, entry.marked_source_url, media_dir,
+        allow_ocr_media_only=version.requires_ocr and job.input_source == 'ocr' and job.status == 'complete')
     snapshot.update(text_sha256=text_sha256(post.text), route_version_id=version.id,
                     model_version=job.model_version, run_id=job.current_run_id,
                     review_policy_sha256=route.quality_gate['review_policy']['sha256'])

@@ -142,6 +142,57 @@ async def test_outbox_sends_once_and_persists_readback(db, client):
         assert part.mid == 'mid.1' and part.verified_at
 
 
+async def test_captionless_media_requires_current_matching_ocr_before_publication(db, client, tmp_path):
+    """OCR разрешает тему, но в MAX сохраняется исходное вложение без транскрипта."""
+    from PIL import Image
+    import test_ocr_integration as ocr
+    from app.ocr.worker import process, claim
+    from app.taxonomy.jobs import enqueue
+    from app.taxonomy.worker import finish_job
+
+    entry_id, route_id = await ready(db, client)
+    settings = ocr.configure(tmp_path)
+    await ocr.media_post(db, entry_id, settings)
+    path = tmp_path / 'media' / 'fixture.png'
+    Image.new('RGB', (20, 20), 'white').save(path)
+    async with db() as session:
+        route = await session.get(MaxPublicationRoute, route_id)
+        version = await session.get(SelectionFilterVersion, route.approved_version_id)
+        version.requires_ocr = True
+        version.expression = {'op': 'condition', 'input_source': 'ocr',
+                              'label_id': 'is_joke', 'compare': 'gte', 'threshold': 90}
+        route.quality_gate = {**route.quality_gate, 'expression_sha256': sha_json(version.expression)}
+        job = await enqueue(session, entry_id, 'tfidf', 'taxonomy', 'ocr')
+        job_id = job.id
+        await session.commit()
+    await process(db, settings, ocr.Reader(), *(await claim(db)))
+    async with db() as session:
+        job = await session.get(TaxonomyClassification, job_id)
+        assert job.status == 'queued'
+        job.status = 'running'  # Только тестовый транспорт, настоящая очередь выше.
+        result = dict(job.result or {})
+        result.update(taxonomy_version=shared.taxonomy_catalog()['version'],
+                      scores=dict.fromkeys((item['id'] for item in shared.taxonomy_catalog()['labels']), .95),
+                      top_3=[], review_status='scored')
+        await session.commit()
+    await finish_job(db, job_id, result, 10, model_version='qa-v1')
+    async with db() as session:
+        entry = await session.get(PipelineEntry, entry_id)
+        post = await session.get(TelegramPost, entry.source_post_id)
+        await mark_source(session, entry, post, await session.get(TelegramChat, post.chat_peer_id))
+        entry.stage, entry.status = 'ready', 'ready'
+        await session.commit()
+        route = await session.get(MaxPublicationRoute, route_id)
+        snapshot = await prepare(session, entry_id, route, settings.media_dir)
+        assert snapshot['original_text'] == ''
+        assert snapshot['text'] == 'Источник: ' + entry.marked_source_url
+        assert len(snapshot['media']) == 1
+        assert 'размножаются' not in snapshot['text']
+        Image.new('RGB', (20, 20), 'black').save(path)
+        with pytest.raises(PreparationError, match='OCR|актуального'):
+            await prepare(session, entry_id, route, settings.media_dir)
+
+
 async def test_restart_with_mid_rechecks_without_sending(db, client):
     entry_id, route_id = await ready(db, client)
     api = FakeMax()

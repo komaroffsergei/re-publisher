@@ -68,6 +68,32 @@ def test_empty_and_deleted_album_are_not_silently_published():
         build_snapshot([post], chat, 'https://t.me/c/1/2', '.')
 
 
+def test_ocr_media_only_keeps_original_attachment_and_source_without_transcript(tmp_path):
+    from PIL import Image
+    image = tmp_path / 'meme.jpg'
+    Image.new('RGB', (20, 20)).save(image)
+    post = SimpleNamespace(id=1, message_id=2, text='', media_type='MessageMediaPhoto',
+        is_deleted=False, grouped_id=None, raw={}, media_path=str(image), media_download_status='downloaded')
+    chat = SimpleNamespace(peer_id=-1001, folder_name='MAX', chat_type='channel')
+    with pytest.raises(PreparationError, match='Только медиа'):
+        build_snapshot([post], chat, 'https://t.me/c/1/2', str(tmp_path))
+    snap = build_snapshot([post], chat, 'https://t.me/c/1/2', str(tmp_path), allow_ocr_media_only=True)
+    assert snap['original_text'] == '' and snap['original_captions'] == []
+    assert snap['text'] == 'Источник: https://t.me/c/1/2'
+    assert snap['media'][0]['path'] == str(image)
+    assert message_parts(snap)[0]['media'] == snap['media']
+    image.unlink()
+    with pytest.raises(PreparationError, match='Медиа'):
+        build_snapshot([post], chat, 'https://t.me/c/1/2', str(tmp_path), allow_ocr_media_only=True)
+
+
+def test_ocr_permission_does_not_make_empty_post_publishable():
+    chat = SimpleNamespace(peer_id=-1001, folder_name='MAX', chat_type='channel')
+    post = SimpleNamespace(id=1, message_id=2, text='', media_type=None, is_deleted=False, grouped_id=None)
+    with pytest.raises(PreparationError, match='Только медиа'):
+        build_snapshot([post], chat, 'https://t.me/c/1/2', '.', allow_ocr_media_only=True)
+
+
 def test_verification_uses_stable_media_ids_not_rotating_tokens():
     message = {'body': {'mid': 'mid.1', 'text': 'source', 'attachments': [
         {'type': 'image', 'payload': {'photo_id': 99, 'token': 'temporary', 'url': 'https://cdn.example/temporary'}}]},
