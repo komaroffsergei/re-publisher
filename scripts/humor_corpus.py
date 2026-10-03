@@ -10,7 +10,7 @@ import json
 import re
 from collections import Counter, defaultdict
 from pathlib import Path
-from app.ocr.engine import compose_input, input_digest
+from app.ocr.engine import compose_input, input_digest, needs_review, QUALITY_POLICY
 
 VALUES = {"да", "нет", "неясно"}
 NAMES = ("is_joke", "input_has_context")
@@ -83,7 +83,8 @@ def assemble(ocr_paths, annotation_paths, known_album_members=None, reserved_sou
             "labels": {name: annotation[name] for name in NAMES}, "reason": annotation["reason"],
             "provenance": "codex_agent", "complete_album": complete_album,
             "ocr_eligible": complete_album and all(r["ocr"].get("status") in {"complete", "no_text"}
-                                                   and r.get("media_sha256") for r in items),
+                                                   and r.get("media_sha256") for r in items)
+                            and not any(needs_review(result) for result in results),
             "caption_length": len(primary["caption"].strip())})
     return output, dict(excluded)
 
@@ -160,7 +161,7 @@ def freeze(rows, directory, tokenizer_sha256=None):
     (directory / "dataset.jsonl").write_bytes(content)
     manifest = {"profile": "humor_ocr", "contract": "caption_ocr_v1", "dataset_sha256": hashlib.sha256(content).hexdigest(),
                 "rows": len(rows), "coverage": counts, "labels": list(NAMES), "source": "Codex personal annotation",
-                "tokenizer_sha256":tokenizer_sha256,
+                "tokenizer_sha256":tokenizer_sha256, "ocr_quality_policy":QUALITY_POLICY,
                 "ocr_versions":sorted({r["ocr_version"] for r in rows if r["ocr_eligible"] and r.get("ocr_version")})}
     (directory / "dataset-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     return manifest

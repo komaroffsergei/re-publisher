@@ -1,5 +1,5 @@
 """Контракт учебного корпуса и сайта проверяется без скачивания весов."""
-from app.ocr.engine import compose_input, input_digest, same_box, reading_order
+from app.ocr.engine import compose_input, input_digest, same_box, reading_order, needs_review
 
 
 def item(text="Я и мой баг", sha="first", status="complete"):
@@ -53,3 +53,12 @@ def test_media_hash_cache_detects_atomic_replacement(tmp_path):
     replacement.replace(path)
     assert media_digest(path) != previous
     assert media_digest(path) == file_digest(path)
+
+
+def test_weak_single_character_requires_review_without_silent_removal():
+    value = item("9")
+    value["blocks"][0]["score"] = .16
+    assert needs_review(value)
+    assert "9" in compose_input(None, [value])
+    value["blocks"][0]["score"] = .5
+    assert not needs_review(value)

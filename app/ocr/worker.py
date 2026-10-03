@@ -14,7 +14,7 @@ from app.db import create_engine, create_session_factory
 from app.models import PipelineEntry, TelegramPost, TaxonomyClassification, TaxonomyRun
 from app.ocr.models import OcrJob, OcrRun
 from app.ocr.jobs import snapshot
-from app.ocr.engine import compose_input, input_digest, file_digest, PREPROCESSING_VERSION
+from app.ocr.engine import compose_input, input_digest, file_digest, PREPROCESSING_VERSION, needs_review
 from app.ocr.media import first_frame
 from app.runtime_status import heartbeat
 
@@ -104,7 +104,7 @@ async def process(factory, settings, reader, entry_id, run_id):
             raise ValueError(problem)
         for item in inputs:
             results.append(await reader.read(item))
-        status = "needs_review" if any(r["status"] == "needs_review" for r in results) else "complete" if compose_input(caption, results) else "no_text"
+        status = "needs_review" if any(needs_review(r) for r in results) else "complete" if compose_input(caption, results) else "no_text"
     except Exception as exc:
         # Не сохраняем полный exception с путями/текстом, только понятную причину.
         status, error = "failed", problem or ("Таймаут OCR" if isinstance(exc, asyncio.TimeoutError) else "Не удалось прочитать вложение")

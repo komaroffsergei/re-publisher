@@ -21,7 +21,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import precision_recall_fscore_support
 from app.taxonomy.artifact import file_sha256
-from app.ocr.engine import CONTRACT
+from app.ocr.engine import CONTRACT, QUALITY_POLICY
 from scripts.humor_corpus import NAMES, coverage
 
 CONFIG = {"profile":"humor_ocr", "version":"humor_ocr_v1", "categories":[],
@@ -36,7 +36,7 @@ def known(rows, name):
 def dataset(directory):
     raw = (directory / "dataset.jsonl").read_bytes()
     manifest = json.loads((directory / "dataset-manifest.json").read_text(encoding="utf-8"))
-    if hashlib.sha256(raw).hexdigest() != manifest["dataset_sha256"] or manifest["contract"] != CONTRACT:
+    if hashlib.sha256(raw).hexdigest() != manifest["dataset_sha256"] or manifest["contract"] != CONTRACT or manifest.get("ocr_quality_policy") != QUALITY_POLICY:
         raise ValueError("Dataset изменён или имеет другой контракт")
     rows = [json.loads(line) for line in raw.splitlines()]
     if any(r["provenance"] != "codex_agent" for r in rows):
@@ -235,7 +235,7 @@ def main():
         models[key]={"version":f"humor-ocr-v1-{key}-{identity}","weights_sha256":checksum,"auxiliary_sha256":auxiliary,
             "path":"baseline.joblib" if key=="tfidf" else "minilm-humor"}
     (args.output/"model-manifest.json").write_text(json.dumps({"models":models,"dataset_sha256":manifest["dataset_sha256"],"profile":"humor_ocr","contract":CONTRACT,
-        "training_script_sha256":file_sha256(Path(__file__)),
+        "training_script_sha256":file_sha256(Path(__file__)), "ocr_quality_policy":QUALITY_POLICY,
         "packages":{name:importlib.metadata.version(name) for name in ('torch','transformers','tokenizers','scikit-learn','numpy','scipy','safetensors','joblib')},
         "tfidf":{"word_ngrams":[1,2],"character_ngrams":[3,5],"min_document_frequency":2,"C":2,"class_weight":"balanced","seed":20261003}},indent=2))
     candidates=[(key,route(values,validation)) for key,values in scores.items() if key!='caption_only']

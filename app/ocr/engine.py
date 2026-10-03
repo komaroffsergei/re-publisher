@@ -18,6 +18,18 @@ CONTRACT = "caption_ocr_v1"
 MAX_PIXELS = 16_000_000
 MIN_SCORE = 0.5
 PREPROCESSING_VERSION = "bilingual-regions-v3"
+QUALITY_POLICY = "all_blocks_min_0.5_v1"
+
+
+def needs_review(result: dict) -> bool:
+    """Даже слабая строка из одного символа не считается прочитанной.
+
+    Блоки сохраняются целиком. Частично распознанное содержимое не
+    подставляется вместо полного входа; policy общая для корпуса и VPS.
+    """
+    return result.get("status") == "needs_review" or any(
+        block["score"] < MIN_SCORE for block in result.get("blocks", [])
+    )
 
 
 def engine_version(directory: str | Path):

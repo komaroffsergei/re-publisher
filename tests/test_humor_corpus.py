@@ -62,3 +62,15 @@ def test_reserved_caption_cannot_return_as_another_message(tmp_path):
     assert corpus.caption_hash("IT Memes") is None
     assert corpus.caption_hash("  ") is None
     assert corpus.caption_hash(caption.replace(" ", "\n")) == corpus.caption_hash(caption)
+
+
+def test_low_confidence_short_line_does_not_count_toward_corpus_quota(tmp_path):
+    from app.ocr.engine import input_digest
+    ocr = {"status":"complete", "blocks":[{"text":"9", "score":.16}]}
+    raw, labels = tmp_path / "ocr.jsonl", tmp_path / "labels.jsonl"
+    raw.write_text(json.dumps({"peer":1,"message":1,"date":"2026-10-03","caption":"Мем",
+        "media_sha256":"unique-image","ocr":ocr}),encoding="utf-8")
+    labels.write_text(json.dumps({"peer":1,"message":1,"input_sha256":input_digest("Мем",[ocr]),
+        "is_joke":"да","input_has_context":"да","reason":"fixture","annotator":"Codex /root"}),encoding="utf-8")
+    rows, _ = corpus.assemble([raw],[labels])
+    assert not rows[0]["ocr_eligible"]

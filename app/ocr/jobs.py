@@ -103,7 +103,8 @@ async def current_input(session, entry_id, post, settings):
         return None, None
     source, _inputs, error = await snapshot(session, post, settings)
     run = await session.get(OcrRun, job.current_run_id) if job.current_run_id else None
-    if error or not run or job.source_sha256 != source or job.status not in {"complete", "no_text"}:
+    from app.ocr.engine import needs_review
+    if error or not run or job.source_sha256 != source or job.status not in {"complete", "no_text"} or any(needs_review(r) for r in run.results):
         return None, run
     return compose_input(post.text, run.results), run
 
@@ -115,7 +116,12 @@ async def public_ocr(session, entry_id, post, settings):
     source, _inputs, _error = await snapshot(session, post, settings)
     rows = list((await session.execute(select(OcrRun).where(OcrRun.entry_id == entry_id)
                       .order_by(OcrRun.id.desc()).limit(20))).scalars())
-    return {"status": job.status if job.source_sha256 == source else "stale", "error": job.error,
+    from app.ocr.engine import needs_review
+    current = next((r for r in rows if r.id == job.current_run_id), None)
+    status = job.status
+    if status in {"complete", "no_text"} and current and any(needs_review(r) for r in current.results):
+        status = "needs_review"
+    return {"status": status if job.source_sha256 == source else "stale", "error": job.error,
             "run_id": job.current_run_id, "runs": [{"id": r.id, "status": r.status,
             "engine_version": r.engine_version, "input_sha256": r.input_sha256,
             "results": r.results, "elapsed_ms": r.elapsed_ms, "error": r.error,
