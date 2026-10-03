@@ -34,7 +34,8 @@ async def snapshot(session, post, settings):
     if deleted:
         error = "В альбоме удалено сообщение; нужен ручной разбор состава"
     now = datetime.now(timezone.utc)
-    if not deleted and post.grouped_id and any(p.updated_at and (now - p.updated_at).total_seconds() < 5 for p in posts):
+    # Редактирование подписи не означает, что альбом снова собирается.
+    if not deleted and post.grouped_id and any(p.created_at and (now - p.created_at).total_seconds() < 5 for p in posts):
         error = "Альбом ещё собирается"
     for item in posts:
         if not item.media_type:

@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, func
 import pytest
 import test_selection_integration as shared
@@ -61,3 +62,22 @@ async def test_long_caption_does_not_skip_media(db,client,tmp_path):
         post.text="a"*501
         job=await enqueue_ocr(session,entry,post,settings);await session.commit()
         run=await session.get(OcrRun,job.current_run_id);assert len(run.inputs)==1
+
+
+async def test_album_caption_edit_keeps_media_fingerprint(db, client, tmp_path):
+    id = await shared.seed(db)
+    settings = ocr.configure(tmp_path)
+    await ocr.media_post(db, id, settings)
+    async with db() as session:
+        entry = await session.get(PipelineEntry, id)
+        post = await session.get(TelegramPost, entry.source_post_id)
+        post.grouped_id = 42
+        post.created_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+        await session.commit()
+        before, _, error = await snapshot(session, post, settings)
+        assert error is None
+        post.text = "edited caption"
+        post.updated_at = datetime.now(timezone.utc)
+        await session.commit()
+        after, _, error = await snapshot(session, post, settings)
+        assert error is None and before == after
