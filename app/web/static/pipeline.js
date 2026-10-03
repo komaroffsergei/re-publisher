@@ -185,7 +185,7 @@
         root.replaceChildren(fragment.content);
         initialize();
         records().forEach(record => {const select = record.querySelector("[data-profile]"); if (select && profiles.has(record.dataset.entryId)) select.value = profiles.get(record.dataset.entryId);});
-        records().forEach(record=>{const select=record.querySelector("[data-input-source]");if(select&&sources.has(record.dataset.entryId))select.value=sources.get(record.dataset.entryId);});
+        records().forEach(record=>{const select=record.querySelector("[data-input-source]");if(select){select.querySelector('[value="combined"]').disabled=record.querySelector("[data-profile]")?.value !== "humor_ocr";if(sources.has(record.dataset.entryId))select.value=sources.get(record.dataset.entryId);}});
         root.querySelectorAll("details").forEach(node => {if (expanded.has(`${node.closest(".pipeline-record")?.dataset.entryId}:${node.className}`)) node.open = true;});
         root.querySelectorAll("[data-column]").forEach(col => col.scrollTop = columns.get(col.dataset.column) || 0);
         root.scrollLeft = boardX; window.scrollTo(x,y);

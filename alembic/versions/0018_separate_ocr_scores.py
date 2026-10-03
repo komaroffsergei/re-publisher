@@ -16,6 +16,7 @@ def upgrade():
     op.create_unique_constraint("uq_taxonomy_entry_model_profile_source", "taxonomy_classifications",
                                ["pipeline_entry_id", "model_key", "profile", "input_source"])
     op.add_column("selection_filter_versions", sa.Column("requires_ocr", sa.Boolean(), nullable=False, server_default="false"))
+    op.add_column("selection_filter_versions", sa.Column("note", sa.Text(), nullable=False, server_default=""))
     op.add_column("filter_evaluations", sa.Column("run_ids", postgresql.JSONB(), nullable=False, server_default="{}"))
     for name in ("completed_inputs", "total_inputs"):
         op.add_column("ocr_runs", sa.Column(name, sa.Integer(), nullable=False, server_default="0"))

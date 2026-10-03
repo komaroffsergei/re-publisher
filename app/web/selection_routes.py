@@ -46,6 +46,7 @@ class FilterInput(BaseModel):
     model_key: Literal["tfidf", "minilm"] = "tfidf"
     profile: Literal["taxonomy", "humor_ocr"] = "taxonomy"
     requires_ocr: bool = False
+    note: str = Field(default="", max_length=1000)
     mark_id: int = Field(gt=0)
     expression: dict
     filter_id: int | None = None
@@ -166,7 +167,7 @@ def register_filter_routes(app, require_auth, session_factory, templates):
             return {"catalog": taxonomy_catalog(), "catalogs": {p: taxonomy_catalog(p) for p in ("taxonomy", "humor_ocr")}, "filters": [{"id": item.id, "name": item.name,
                 "enabled": item.enabled, "archived": item.archived, "base_version_id": version.id,
                 "number": version.number, "model_key": version.model_key, "mark_id": version.mark_id,
-                "profile": version.profile, "requires_ocr": version.requires_ocr,
+                "profile": version.profile, "requires_ocr": version.requires_ocr, "note": version.note,
                 "assigned_label_id": version.assigned_label_id,
                 "mark_name": mark.name,
                 "expression": version.expression, "matches": matches.get(version.id, 0),
@@ -204,7 +205,7 @@ def register_filter_routes(app, require_auth, session_factory, templates):
             session.add(item)
             await session.flush()
             version = SelectionFilterVersion(filter_id=item.id, number=number, name=draft.name,
-                model_key=draft.model_key, profile=draft.profile, requires_ocr=draft.requires_ocr, mark_id=draft.mark_id, expression=draft.expression)
+                model_key=draft.model_key, profile=draft.profile, requires_ocr=draft.requires_ocr, note=draft.note, mark_id=draft.mark_id, expression=draft.expression)
             session.add(version)
             await session.flush()
             item.active_version_id = version.id

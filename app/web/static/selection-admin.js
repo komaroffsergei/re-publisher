@@ -333,6 +333,7 @@
       form.elements.model_key.value = item?.model_key || "tfidf";
       form.elements.profile.value = item?.profile || "taxonomy";
       form.elements.requires_ocr.checked = item?.requires_ocr ?? false;
+      form.elements.note.value = item?.note || "";
       catalog = catalogs[form.elements.profile.value]?.labels || [];
       drawMarks(item?.mark_id);
       expression = item
@@ -364,6 +365,7 @@
         model_key: form.elements.model_key.value,
         profile: form.elements.profile.value,
         requires_ocr: form.elements.requires_ocr.checked,
+        note: form.elements.note.value,
         mark_id: Number(assignedMark.value),
         expression,
         filter_id: edited?.id || null,
@@ -426,6 +428,7 @@
             ),
           );
         }
+        if (item.note) row.append(el("p", item.note, "muted"));
         const actions = el("div", undefined, "selection-actions");
         if (!item.archived) {
           actions.append(
@@ -459,7 +462,7 @@
       }
       dirty(); draw();
     });
-    for (const name of ["name", "enabled", "model_key"])
+    for (const name of ["name", "enabled", "model_key", "note"])
       form.elements[name].addEventListener("input", dirty);
     document.getElementById("filter-new").onclick = () => reset();
     document.getElementById("filter-cancel").onclick = () => reset();
@@ -503,7 +506,9 @@
           preview.append(
             el(
               "p",
-              `Ещё ${data.backfill_needed} постов требуют актуальных оценок. После применения фильтра они будут досчитаны.`,
+              form.elements.requires_ocr.checked
+                ? `Ещё ${data.backfill_needed} постов без актуальных оценок. Для OCR старый буфер не запускается; выбери карточки для ручной проверки.`
+                : `Ещё ${data.backfill_needed} постов требуют актуальных оценок. После применения фильтра они будут досчитаны.`,
               "muted",
             ),
           );

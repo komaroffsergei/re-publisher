@@ -633,6 +633,7 @@ class SelectionFilterVersion(Base):
     model_key: Mapped[str] = mapped_column(Text, nullable=False)
     profile: Mapped[str] = mapped_column(Text, server_default="taxonomy", nullable=False)
     requires_ocr: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
+    note: Mapped[str] = mapped_column(Text, server_default="", nullable=False)
     mark_id: Mapped[int] = mapped_column(ForeignKey("filter_marks.id"), nullable=False)
     assigned_label_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     expression: Mapped[dict] = mapped_column(JSONB, nullable=False)
