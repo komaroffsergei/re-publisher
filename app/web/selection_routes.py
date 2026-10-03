@@ -45,6 +45,7 @@ class FilterInput(BaseModel):
     enabled: bool = True
     model_key: Literal["tfidf", "minilm"] = "tfidf"
     profile: Literal["taxonomy", "humor_ocr"] = "taxonomy"
+    requires_ocr: bool = False
     mark_id: int = Field(gt=0)
     expression: dict
     filter_id: int | None = None
@@ -61,7 +62,7 @@ class FilterInput(BaseModel):
     @field_validator("expression")
     @classmethod
     def validate_tree(cls, value, info: ValidationInfo):
-        return validate_expression(value, info.data.get("profile", "taxonomy"))
+        return validate_expression(value, info.data.get("profile", "taxonomy"), info.data.get("requires_ocr", False))
 
 
 def digest(draft):
@@ -165,7 +166,7 @@ def register_filter_routes(app, require_auth, session_factory, templates):
             return {"catalog": taxonomy_catalog(), "catalogs": {p: taxonomy_catalog(p) for p in ("taxonomy", "humor_ocr")}, "filters": [{"id": item.id, "name": item.name,
                 "enabled": item.enabled, "archived": item.archived, "base_version_id": version.id,
                 "number": version.number, "model_key": version.model_key, "mark_id": version.mark_id,
-                "profile": version.profile,
+                "profile": version.profile, "requires_ocr": version.requires_ocr,
                 "assigned_label_id": version.assigned_label_id,
                 "mark_name": mark.name,
                 "expression": version.expression, "matches": matches.get(version.id, 0),
@@ -203,13 +204,13 @@ def register_filter_routes(app, require_auth, session_factory, templates):
             session.add(item)
             await session.flush()
             version = SelectionFilterVersion(filter_id=item.id, number=number, name=draft.name,
-                model_key=draft.model_key, profile=draft.profile, mark_id=draft.mark_id, expression=draft.expression)
+                model_key=draft.model_key, profile=draft.profile, requires_ocr=draft.requires_ocr, mark_id=draft.mark_id, expression=draft.expression)
             session.add(version)
             await session.flush()
             item.active_version_id = version.id
             # Новый профиль не запускает массовый OCR старого буфера при сохранении
             # фильтра. Его оценки появляются при ручном запуске и для новых постов.
-            application = await enqueue_application(session, version) if draft.enabled and draft.profile == "taxonomy" else None
+            application = await enqueue_application(session, version) if draft.enabled and draft.profile == "taxonomy" and not draft.requires_ocr else None
             await session.commit()
             return {"id": item.id, "version_id": version.id, "application_id": application.id if application else None}
 

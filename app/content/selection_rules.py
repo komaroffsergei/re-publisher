@@ -31,7 +31,7 @@ def label_name(label_id):
     return f"{labels[item['parent']]['name']} / {item['name']}" if item["parent"] else item["name"]
 
 
-def validate_expression(expression: dict, profile="taxonomy") -> dict:
+def validate_expression(expression: dict, profile="taxonomy", requires_ocr=None) -> dict:
     labels = {label["id"] for label in taxonomy_catalog(profile)["labels"]}
     count = 0
 
@@ -41,13 +41,24 @@ def validate_expression(expression: dict, profile="taxonomy") -> dict:
         if count > 100 or depth > 6 or not isinstance(node, dict):
             raise ValueError("Не более 100 условий и 6 уровней вложенности")
         op = node.get("op")
+        if op == "length":
+            value = node.get("threshold")
+            if node.get("compare") not in {"gte", "gt", "lte", "lt", "eq"} or type(value) is not int or value < 0:
+                raise ValueError("Длина — неотрицательное целое число символов")
+            return {"op": op, "compare": node["compare"], "threshold": value}
         if op == "condition":
+            source = node.get("input_source", "text")
+            if source not in {"text", "ocr"} or source == "ocr" and requires_ocr is False:
+                raise ValueError("Для условий OCR включите «Требует OCR»")
             value = node.get("threshold")
             if node.get("label_id") not in labels or node.get("compare") not in {"gte", "gt", "lte", "lt"}:
                 raise ValueError("Неизвестная категория или сравнение")
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 <= value <= 100:
                 raise ValueError("Порог должен быть от 0 до 100%")
-            return {"op": op, "label_id": node["label_id"], "compare": node["compare"], "threshold": value}
+            result = {"op": op, "label_id": node["label_id"], "compare": node["compare"], "threshold": value}
+            if "input_source" in node:
+                result["input_source"] = source
+            return result
         children = node.get("children")
         if op not in {"and", "or", "not"} or not isinstance(children, list) or not children:
             raise ValueError("Добавьте условия в группу И / ИЛИ / НЕ")
@@ -58,11 +69,18 @@ def validate_expression(expression: dict, profile="taxonomy") -> dict:
     return visit(expression)
 
 
-def evaluate(expression: dict, scores: dict[str, float]) -> tuple[bool | None, dict]:
+def evaluate(expression: dict, scores: dict, text_length=None) -> tuple[bool | None, dict]:
     """Трёхзначная логика: НЕ неизвестного остаётся неизвестным."""
     op = expression["op"]
+    if op == "length":
+        result = None if text_length is None else {"gte": text_length >= expression["threshold"],
+            "gt": text_length > expression["threshold"], "lte": text_length <= expression["threshold"],
+            "lt": text_length < expression["threshold"], "eq": text_length == expression["threshold"]}[expression["compare"]]
+        return result, {**expression, "value": text_length, "result": result}
     if op == "condition":
-        score = scores.get(expression["label_id"])
+        selected = scores.get(expression.get("input_source", "text"))
+        selected = selected if isinstance(selected, dict) else scores
+        score = selected.get(expression["label_id"])
         valid = isinstance(score, (int, float)) and not isinstance(score, bool) and math.isfinite(score) and 0 <= score <= 1
         threshold = expression["threshold"] / 100
         result = None
@@ -70,7 +88,7 @@ def evaluate(expression: dict, scores: dict[str, float]) -> tuple[bool | None, d
             result = {"gte": score >= threshold, "gt": score > threshold,
                       "lte": score <= threshold, "lt": score < threshold}[expression["compare"]]
         return result, {**expression, "score": score if valid else None, "result": result}
-    evaluated = [evaluate(child, scores) for child in expression["children"]]
+    evaluated = [evaluate(child, scores, text_length) for child in expression["children"]]
     values = [value for value, _trace in evaluated]
     if op == "not":
         result = None if values[0] is None else not values[0]
@@ -90,7 +108,7 @@ def matching_conditions(trace: dict) -> list[dict]:
     def visit(node, expected):
         if node.get("result") is not expected:
             return []
-        if node["op"] == "condition":
+        if node["op"] in {"condition", "length"}:
             return [{**node, "negated": not expected}]
         if node["op"] == "not":
             return visit(node["children"][0], not expected)
@@ -98,3 +116,17 @@ def matching_conditions(trace: dict) -> list[dict]:
                 for condition in visit(child, expected)]
 
     return visit(trace, True)
+
+
+def required_sources(version):
+    """Старый профиль остаётся комбинированным; новые условия явно выбирают вход."""
+    sources = set()
+    def visit(node):
+        if node["op"] == "condition":
+            sources.add(node.get("input_source", "combined" if getattr(version, "profile", None) == "humor_ocr" else "text"))
+        for child in node.get("children", []):
+            visit(child)
+    visit(version.expression)
+    if getattr(version, "requires_ocr", False):
+        sources.add("ocr")
+    return sources

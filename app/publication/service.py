@@ -76,7 +76,8 @@ async def prepare(session, entry_id: int, route, media_dir: str) -> dict:
     job = await session.scalar(select(TaxonomyClassification).where(
         TaxonomyClassification.pipeline_entry_id == entry.id,
         TaxonomyClassification.model_key == version.model_key,
-        TaxonomyClassification.profile == profile_of(version)))
+        TaxonomyClassification.profile == profile_of(version),
+        TaxonomyClassification.input_source == ("ocr" if version.requires_ocr else "combined" if profile_of(version) == "humor_ocr" else "text")))
     if (not job or job.model_version != route.quality_gate['model_version']
             or (await current_assessment(session, version, job, post))['outcome'] != 'matched'):
         raise PreparationError('Нет актуального совпадения проверенной версии модели')

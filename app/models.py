@@ -551,7 +551,7 @@ class PipelineEntry(TimestampMixin, Base):
 
 class TaxonomyClassification(Base):
     __tablename__ = "taxonomy_classifications"
-    __table_args__ = (UniqueConstraint("pipeline_entry_id", "model_key", "profile", name="uq_taxonomy_classifications_entry_model_profile"),)
+    __table_args__ = (UniqueConstraint("pipeline_entry_id", "model_key", "profile", "input_source", name="uq_taxonomy_entry_model_profile_source"),)
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     pipeline_entry_id: Mapped[int] = mapped_column(
@@ -559,6 +559,7 @@ class TaxonomyClassification(Base):
     )
     model_key: Mapped[str] = mapped_column(Text, server_default="tfidf", nullable=False)
     profile: Mapped[str] = mapped_column(Text, server_default="taxonomy", nullable=False)
+    input_source: Mapped[str] = mapped_column(Text, server_default="text", nullable=False)
     input_sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
     ocr_run_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     current_run_id: Mapped[int | None] = mapped_column(ForeignKey("taxonomy_runs.id", ondelete="SET NULL"), nullable=True)
@@ -586,6 +587,7 @@ class TaxonomyRun(Base):
     source_post_id: Mapped[int] = mapped_column(ForeignKey("telegram_posts.id", ondelete="CASCADE"), nullable=False)
     model_key: Mapped[str] = mapped_column(Text, nullable=False)
     profile: Mapped[str] = mapped_column(Text, server_default="taxonomy", nullable=False)
+    input_source: Mapped[str] = mapped_column(Text, server_default="text", nullable=False)
     input_sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
     ocr_run_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     text_sha256: Mapped[str] = mapped_column(Text, nullable=False)
@@ -630,6 +632,7 @@ class SelectionFilterVersion(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     model_key: Mapped[str] = mapped_column(Text, nullable=False)
     profile: Mapped[str] = mapped_column(Text, server_default="taxonomy", nullable=False)
+    requires_ocr: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
     mark_id: Mapped[int] = mapped_column(ForeignKey("filter_marks.id"), nullable=False)
     assigned_label_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     expression: Mapped[dict] = mapped_column(JSONB, nullable=False)
@@ -643,6 +646,7 @@ class FilterEvaluation(Base):
     entry_id: Mapped[int] = mapped_column(ForeignKey("pipeline_entries.id", ondelete="CASCADE"), index=True)
     version_id: Mapped[int] = mapped_column(ForeignKey("selection_filter_versions.id"), index=True)
     run_id: Mapped[int | None] = mapped_column(ForeignKey("taxonomy_runs.id", ondelete="SET NULL"), nullable=True)
+    run_ids: Mapped[dict] = mapped_column(JSONB, server_default="{}", nullable=False)
     text_sha256: Mapped[str] = mapped_column(Text, nullable=False)
     input_key: Mapped[str] = mapped_column(Text, nullable=False)
     outcome: Mapped[str] = mapped_column(Text, nullable=False)

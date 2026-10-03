@@ -142,7 +142,7 @@
       element(
         "p",
         "compare-footer",
-        `${humor ? "" : `Сложность: ${leftRun?.result?.technical_complexity ?? "—"} / ${rightRun?.result?.technical_complexity ?? "—"} · `}Классификация: ${leftRun?.elapsed_ms ?? "—"} / ${rightRun?.elapsed_ms ?? "—"} мс${humor ? ` · OCR: ${leftRun?.ocr_elapsed_ms ?? "—"} / ${rightRun?.ocr_elapsed_ms ?? "—"} мс` : ""}`,
+        `${humor ? "" : `Сложность: ${leftRun?.result?.technical_complexity ?? "—"} / ${rightRun?.result?.technical_complexity ?? "—"} · `}Классификация: ${leftRun?.elapsed_ms ?? "—"} / ${rightRun?.elapsed_ms ?? "—"} мс${(humor || root.querySelector("[data-compare-source]").value === "ocr") ? ` · OCR: ${leftRun?.ocr_elapsed_ms ?? "—"} / ${rightRun?.ocr_elapsed_ms ?? "—"} мс` : ""}`,
       ),
     );
   }
@@ -169,7 +169,8 @@
   function render(root) {
     const profile = root.querySelector("[data-compare-profile]").value;
     root.querySelector("[data-compare-all]").closest("label").hidden = profile === "humor_ocr";
-    const runs = (root.taxonomyRuns || []).filter(run => (run.profile || "taxonomy") === profile);
+    const source = root.querySelector("[data-compare-source]").value;
+    const runs = (root.taxonomyRuns || []).filter(run => (run.profile || "taxonomy") === profile && (run.input_source || (profile === "humor_ocr" ? "combined" : "text")) === source);
     root.taxonomyCatalog = root.taxonomyCatalogs?.[profile]?.labels || [];
     root.querySelector("[data-compare-count]").textContent =
       `${runs.length} сохранённых прогонов${root.dataset.nextBeforeId ? "+" : ""}`;
@@ -203,7 +204,12 @@
   }
 
   document.querySelectorAll("[data-taxonomy-compare]").forEach((root) => {
-    root.querySelector("[data-compare-profile]").addEventListener("change", () => render(root));
+    root.querySelector("[data-compare-profile]").addEventListener("change", () => {
+      const humor=root.querySelector("[data-compare-profile]").value === "humor_ocr";
+      const source=root.querySelector("[data-compare-source]"); source.querySelector('[value="combined"]').disabled=!humor;
+      source.value=humor ? "combined" : "text"; render(root);
+    });
+    root.querySelector("[data-compare-source]").addEventListener("change",()=>render(root));
     const details = root.closest(".taxonomy-compare-disclosure");
     const open = () =>
       load(root).catch((error) => {

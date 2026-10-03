@@ -44,15 +44,14 @@ async def mark_source(session, entry, post, chat, manual=False):
         raise HTTPException(409, "Дождитесь завершения сортировки")
     from app.config import get_settings
     from app.ocr.jobs import classification_input_current
+    valid = []
     for job in jobs:
-        if job.status in {"complete", "media_only", "empty"} and not await classification_input_current(session, post, job, get_settings()):
-            raise HTTPException(409, "OCR или медиа изменились; обновите классификацию")
-    if not any(
-        j.status in {"complete", "media_only"}
-        and j.text_sha256 == text_sha256(post.text)
-        for j in jobs
-    ):
-        raise HTTPException(409, "Сначала обновите классификацию изменённого текста")
+        if job.status in {"complete", "media_only"} and await classification_input_current(session, post, job, get_settings()):
+            from app.taxonomy.profiles import source_of
+            if source_of(job) == "ocr" or job.text_sha256 == text_sha256(post.text):
+                valid.append(job)
+    if not valid:
+        raise HTTPException(409, "Сначала обновите классификацию изменённого текста или OCR")
     if entry.stage == "filtered" and not await has_marks(session, entry.id):
         raise HTTPException(409, "У поста нет признаков отбора")
     primary = album_primary(await album_posts(session, post))
@@ -79,12 +78,15 @@ async def readiness_error(session, entry, post, media_dir):
         return "Исходное сообщение удалено"
     from app.config import get_settings
     from app.ocr.jobs import classification_input_current
-    jobs = (await session.execute(select(TaxonomyClassification).where(
-        TaxonomyClassification.pipeline_entry_id == entry.id,
-        TaxonomyClassification.profile == "humor_ocr",
-        TaxonomyClassification.status.in_(("complete", "media_only", "empty"))))).scalars()
-    for job in jobs:
-        if not await classification_input_current(session, post, job, get_settings()):
+    from app.taxonomy.profiles import source_of
+    jobs = list((await session.execute(select(TaxonomyClassification).where(
+        TaxonomyClassification.pipeline_entry_id == entry.id))).scalars())
+    if jobs:
+        valid = False
+        for job in jobs:
+            if job.status in {"complete", "media_only"} and (source_of(job) == "ocr" or job.text_sha256 == text_sha256(post.text)):
+                valid = valid or await classification_input_current(session, post, job, get_settings())
+        if not valid:
             return "OCR или медиа изменились; обновите классификацию"
     if not entry.marked_source_url or entry.marked_text_sha256 != text_sha256(
         post.text

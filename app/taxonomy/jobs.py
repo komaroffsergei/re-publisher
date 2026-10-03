@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.taxonomy.profiles import PROFILES, profile_of
+from app.taxonomy.profiles import PROFILES, profile_of, source_of
 
 from app.models import (
     PipelineEntry,
@@ -32,13 +32,14 @@ def public_job(
         return None
     status = (
         "stale"
-        if current_text is not None and job.text_sha256 != text_sha256(current_text)
+        if source_of(job) != "ocr" and current_text is not None and job.text_sha256 != text_sha256(current_text)
         else job.status
     )
     return {
         "run_id": getattr(job, "current_run_id", None),
         "model_key": job.model_key,
         "profile": profile_of(job),
+        "input_source": source_of(job),
         "input_sha256": getattr(job, "input_sha256", None),
         "ocr_run_id": getattr(job, "ocr_run_id", None),
         "status": status,
@@ -131,8 +132,11 @@ async def sort_textless_post(
 
 
 async def enqueue(
-    session: AsyncSession, entry_id: int, model_key: str, profile: str = "taxonomy"
+    session: AsyncSession, entry_id: int, model_key: str, profile: str = "taxonomy", input_source: str | None = None
 ) -> TaxonomyClassification:
+    input_source = input_source or ("combined" if profile == "humor_ocr" else "text")
+    if input_source not in {"text", "ocr", "combined"} or (input_source == "combined" and profile != "humor_ocr"):
+        raise HTTPException(422, detail="Неизвестный источник входа")
     if model_key not in MODEL_KEYS:
         raise HTTPException(404, detail="Модель не найдена")
     if profile not in PROFILES:
@@ -156,19 +160,19 @@ async def enqueue(
     ):
         raise HTTPException(409, detail="Карточка недоступна для сортировки")
     ocr_run, model_input, settings, ocr_problem = None, None, None, None
-    if profile == "humor_ocr":
+    if input_source != "text":
         from app.config import get_settings
         from app.ocr.jobs import enqueue_ocr, current_input
         settings = get_settings()
-        if not settings.humor_model_dir:
+        if profile == "humor_ocr" and not settings.humor_model_dir:
             raise HTTPException(409, "Модель профиля юмора ещё не готова")
         from app.ocr.models import OcrJob
         existing_ocr = await session.get(OcrJob, entry.id)
         ocr_job = await enqueue_ocr(session, entry, post, settings, retry=bool(existing_ocr and existing_ocr.status in {"failed", "needs_review"}))
-        model_input, ocr_run = await current_input(session, entry.id, post, settings)
+        model_input, ocr_run = await current_input(session, entry.id, post, settings, input_source)
         if model_input is None and ocr_job.status == "needs_review":
             ocr_problem = ocr_job.error or "OCR требует ручного разбора"
-    if profile == "taxonomy" and not (post.text or "").strip():
+    if input_source == "text" and not (post.text or "").strip():
         return await mark_without_text(session, entry, post)
 
     job = (
@@ -178,6 +182,7 @@ async def enqueue(
                 TaxonomyClassification.pipeline_entry_id == entry_id,
                 TaxonomyClassification.model_key == model_key,
                 TaxonomyClassification.profile == profile,
+                TaxonomyClassification.input_source == input_source,
             )
             .with_for_update()
         )
@@ -194,7 +199,7 @@ async def enqueue(
             select(TaxonomyClassification.id)
             .where(
                 TaxonomyClassification.pipeline_entry_id == entry_id,
-                (TaxonomyClassification.model_key != model_key) | (TaxonomyClassification.profile != profile),
+                (TaxonomyClassification.model_key != model_key) | (TaxonomyClassification.profile != profile) | (TaxonomyClassification.input_source != input_source),
                 TaxonomyClassification.status.in_(("ocr", "queued", "loading", "running")),
                 TaxonomyClassification.text_sha256 == fingerprint,
             )
@@ -210,12 +215,14 @@ async def enqueue(
             source_post_id=post.id,
             model_key=model_key,
             profile=profile,
+            input_source=input_source,
             text_sha256=fingerprint,
         )
         session.add(job)
     job.text_sha256 = fingerprint
-    job.input_sha256 = ocr_run.input_sha256 if profile == "humor_ocr" and model_input is not None else fingerprint if profile == "taxonomy" else None
-    job.ocr_run_id = ocr_run.id if profile == "humor_ocr" and ocr_run is not None else None
+    from app.ocr.jobs import classification_digest
+    job.input_sha256 = classification_digest(post, ocr_run, input_source) if input_source != "text" and model_input is not None else fingerprint if input_source == "text" else None
+    job.ocr_run_id = ocr_run.id if input_source != "text" and ocr_run is not None else None
     # Worker запишет версию фактически загруженных весов. До этого она неизвестна.
     job.model_version = None
     run = TaxonomyRun(
@@ -223,11 +230,12 @@ async def enqueue(
         source_post_id=post.id,
         model_key=model_key,
         profile=profile,
+        input_source=input_source,
         input_sha256=job.input_sha256,
         ocr_run_id=job.ocr_run_id,
         text_sha256=fingerprint,
         model_version=None,
-        status="needs_review" if ocr_problem else "ocr" if profile == "humor_ocr" and model_input is None else "queued",
+        status="needs_review" if ocr_problem else "ocr" if input_source != "text" and model_input is None else "queued",
         queued_at=now,
         error=ocr_problem,
         finished_at=now if ocr_problem else None,
@@ -281,6 +289,9 @@ async def invalidate_if_edited(
         return False
     now = datetime.now(timezone.utc)
     for job in changed:
+        if source_of(job) == "ocr":
+            job.text_sha256 = fingerprint
+            continue
         if job.current_run_id is not None and job.status in {"ocr", "queued", "loading", "running"}:
             run = (
                 await session.execute(
@@ -333,6 +344,7 @@ def public_run(run: TaxonomyRun, current_text: str | None) -> dict:
         "id": run.id,
         "model_key": run.model_key,
         "profile": profile_of(run),
+        "input_source": source_of(run),
         "input_sha256": getattr(run, "input_sha256", None),
         "ocr_run_id": getattr(run, "ocr_run_id", None),
         "model_version": run.model_version,
@@ -341,7 +353,7 @@ def public_run(run: TaxonomyRun, current_text: str | None) -> dict:
         "error": run.error,
         "elapsed_ms": run.elapsed_ms,
         "origin": run.origin,
-        "is_current_text": run.text_sha256 == text_sha256(current_text),
+        "is_current_text": source_of(run) == "ocr" or run.text_sha256 == text_sha256(current_text),
         "queued_at": run.queued_at.isoformat() if run.queued_at else None,
         "started_at": run.started_at.isoformat() if run.started_at else None,
         "finished_at": run.finished_at.isoformat() if run.finished_at else None,

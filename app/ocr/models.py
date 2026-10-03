@@ -29,6 +29,8 @@ class OcrRun(Base):
     inputs: Mapped[list] = mapped_column(JSONB, server_default="[]", nullable=False)
     results: Mapped[list] = mapped_column(JSONB, server_default="[]", nullable=False)
     error: Mapped[str | None] = mapped_column(Text)
+    completed_inputs: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    total_inputs: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
     elapsed_ms: Mapped[int | None] = mapped_column(Integer)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -34,6 +34,19 @@
     record.setAttribute("aria-busy", String(Boolean(busy)));
     const profile = record.querySelector("[data-profile]");
     if (profile) profile.disabled = Boolean(busy);
+    const inputSource=record.querySelector("[data-input-source]"); if(inputSource) inputSource.disabled=Boolean(busy);
+    const badge=record.querySelector("[data-ocr-badge]"); if(badge){badge.hidden=!state.ocr_badge;badge.textContent=state.ocr_badge || "OCR";badge.classList.toggle("is-stale",state.ocr_badge === "OCR устарел");}
+    const ocrJob=state.ocr || {}; const ocrModel=Object.values(state.taxonomies).find(j=>j.input_source === "ocr" && ["ocr","queued","loading","running"].includes(j.status));
+    const progress=record.querySelector("[data-ocr-progress]");
+    if(progress){
+      const working=["queued","running","waiting_media"].includes(ocrJob.status) || Boolean(ocrModel);
+      progress.hidden=!working;
+      const phase=progress.querySelector("[data-ocr-phase]"); const bar=progress.querySelector("[data-ocr-bar]");
+      const count=progress.querySelector("[data-ocr-count]");
+      phase.textContent=ocrJob.status === "running" ? "OCR · распознаём надписи" : ocrJob.status === "waiting_media" ? "Ждём медиа" : ocrModel && ["loading","running"].includes(ocrModel.status) ? "Классификация OCR" : "В очереди OCR";
+      if(ocrJob.status === "running" && ocrJob.total_inputs>1){bar.max=ocrJob.total_inputs;bar.value=ocrJob.completed_inputs || 0;}else bar.removeAttribute("value");
+      count.textContent=ocrJob.total_inputs ? `${ocrJob.completed_inputs || 0} / ${ocrJob.total_inputs} вложений завершено` : "";
+    }
     record.querySelectorAll("[data-taxonomy]").forEach((button) => {
       button.disabled =
         busy || state.deleted || button.dataset.modelEnabled !== "true";
@@ -50,7 +63,7 @@
         line.className = `model-state state-${job.status}`;
         const uncertainty =
           job.result?.review_status === "needs_review" ? " · Не уверен" : "";
-        line.textContent = `${names[key] || key}${job.profile === "humor_ocr" ? " · OCR-профиль" : ""} · ${statuses[job.status] || job.status}${uncertainty}${job.elapsed_ms == null ? "" : ` · ${job.elapsed_ms} мс`}`;
+        line.textContent = `${names[key] || key}${job.input_source === "ocr" ? " · OCR" : job.input_source === "combined" ? " · Подпись + OCR" : " · Текст поста"} · ${statuses[job.status] || job.status}${uncertainty}${job.elapsed_ms == null ? "" : ` · ${job.elapsed_ms} мс`}`;
         if (job.profile === "humor_ocr" && job.result?.features) {
           for (const feature of job.result.features) {
             const score = document.createElement("small");
@@ -168,9 +181,11 @@
         const columns = new Map(Array.from(root.querySelectorAll("[data-column]")).map(col => [col.dataset.column, col.scrollTop]));
         const expanded = new Set(Array.from(root.querySelectorAll("details[open]")).map(node => `${node.closest(".pipeline-record")?.dataset.entryId}:${node.className}`));
         const profiles = new Map(current.map(record => [record.dataset.entryId, record.querySelector("[data-profile]")?.value]));
+        const sources=new Map(current.map(record=>[record.dataset.entryId,record.querySelector("[data-input-source]")?.value]));
         root.replaceChildren(fragment.content);
         initialize();
         records().forEach(record => {const select = record.querySelector("[data-profile]"); if (select && profiles.has(record.dataset.entryId)) select.value = profiles.get(record.dataset.entryId);});
+        records().forEach(record=>{const select=record.querySelector("[data-input-source]");if(select&&sources.has(record.dataset.entryId))select.value=sources.get(record.dataset.entryId);});
         root.querySelectorAll("details").forEach(node => {if (expanded.has(`${node.closest(".pipeline-record")?.dataset.entryId}:${node.className}`)) node.open = true;});
         root.querySelectorAll("[data-column]").forEach(col => col.scrollTop = columns.get(col.dataset.column) || 0);
         root.scrollLeft = boardX; window.scrollTo(x,y);
@@ -235,12 +250,12 @@
       } else {
         const job = await request(
           `/api/pipeline/${record.dataset.entryId}/taxonomy/${button.dataset.taxonomy}`,
-          {profile: record.querySelector("[data-profile]")?.value || "taxonomy"},
+          {profile: record.querySelector("[data-profile]")?.value || "taxonomy", input_source: record.querySelector("[data-input-source]")?.value || "text"},
         );
         render(record, {
           ...state,
           active: ["ocr", "queued", "loading", "running"].includes(job.status),
-          taxonomies: { ...state.taxonomies, [job.profile === "humor_ocr" ? `humor_ocr:${job.model_key}` : job.model_key]: job },
+          taxonomies: { ...state.taxonomies, [`${job.profile === "humor_ocr" ? "humor_ocr:" : ""}${job.model_key}${job.input_source === "ocr" ? ":ocr" : ""}`]: job },
         });
       }
     } catch (error) {
@@ -251,6 +266,12 @@
       render(record, record.currentState);
       await refresh();
     }
+  });
+  root.addEventListener("change",event=>{
+    if(!event.target.matches("[data-profile]"))return;
+    const source=event.target.closest(".pipeline-record").querySelector("[data-input-source]");
+    source.querySelector('[value="combined"]').disabled=event.target.value !== "humor_ocr";
+    source.value=event.target.value === "humor_ocr" ? "combined" : "text";
   });
   let runSignature = "";
   if (detail) {
@@ -277,5 +298,5 @@
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) refresh();
   });
-  setInterval(refresh, 5000);
+  let lastIdle=0; setInterval(()=>{if(records().some(r=>r.currentState?.active)||Date.now()-lastIdle>=5000){lastIdle=Date.now();refresh();}},2000);
 })();

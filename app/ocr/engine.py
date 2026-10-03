@@ -71,6 +71,11 @@ def compose_input(caption: str | None, items: list[dict]) -> str:
     return "\n\n".join(parts) if (caption or "").strip() or any(i.get("blocks") for i in items) else ""
 
 
+def compose_ocr(items: list[dict]) -> str:
+    """Только прочитанные надписи; подпись Telegram здесь не участвует."""
+    return "\n\n".join("\n".join(b["text"] for b in item.get("blocks", [])) for item in items).strip()
+
+
 def input_digest(caption: str | None, items: list[dict]) -> str:
     data = {"contract": CONTRACT, "caption": (caption or "").strip(), "media": [
         {key: item.get(key) for key in ("media_sha256", "engine_version", "status", "blocks")}

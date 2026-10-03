@@ -17,15 +17,17 @@ from app.models import (
     TaxonomyClassification,
 )
 from app.taxonomy.jobs import enqueue, text_sha256, mark_without_text
-from app.taxonomy.profiles import profile_of, job_key
+from app.taxonomy.profiles import profile_of, job_key, source_of
 from app.content.selection_filters import (
     application_loop,
     current_assessment,
+    evaluate_post,
     has_marks,
     needs_backfill,
 )
 from app.content.post_preparation import mark_source, readiness_error
 from app.runtime_status import heartbeat
+from app.content.selection_rules import evaluate, required_sources
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +65,7 @@ async def advance(session, entry, post, chat, versions, settings):
         entry.ready_at = None
         return
     jobs = {
-        job_key(j.model_key, profile_of(j)): j
+        job_key(j.model_key, profile_of(j), source_of(j)): j
         for j in (
             await session.execute(
                 select(TaxonomyClassification).where(
@@ -79,59 +81,53 @@ async def advance(session, entry, post, chat, versions, settings):
     manual = entry.auto_manual_mark and entry.marked_text_sha256 == text_sha256(
         post.text
     )
-    required = (
-        sorted({(v.model_key, profile_of(v)) for v in versions}, key=lambda key: key[0] != "tfidf")
-        if not manual
-        else []
-    )
     if not versions and not manual:
         entry.auto_retry_at = now + timedelta(seconds=30)
         entry.last_error = "Нет активных фильтров"
         return
-    if not (post.text or "").strip() and not manual and not any(profile == "humor_ocr" for _key, profile in required):
-        await mark_without_text(session, entry, post)
-        entry.auto_state = "done"
-        return
-    for key, profile in required:
-        job = jobs.get(job_key(key, profile))
-        if job and profile == "humor_ocr" and job.status == "failed":
-            from app.ocr.models import OcrJob
-            ocr_job = await session.get(OcrJob, entry.id)
-            if ocr_job and ocr_job.status == "failed":
-                failure(entry, "ocr", ocr_job.error or "OCR остановлен после повторов")
-                entry.auto_state = "stopped"
-                return
-        if job and profile == "humor_ocr" and job.status in {"complete", "media_only", "empty"}:
-            from app.ocr.jobs import classification_input_current
-            if not await classification_input_current(session, post, job, settings):
-                job.status = "stale"
-        if job and job.status == "needs_review":
-            failure(entry, "ocr", job.error or "OCR требует ручного разбора")
-            return
-        if needs_backfill(job, post, profile):
-            if (
-                job
-                and job.status == "failed"
-                and entry.auto_phase != f"retry:{job.current_run_id}"
-            ):
-                # Запоминаем конкретный провал, чтобы каждый polling не сдвигал таймер.
-                entry.auto_phase = f"retry:{job.current_run_id}"
-                entry.last_error = job.error or "Ошибка модели"
-                if entry.auto_attempts >= 3:
-                    entry.auto_state = "stopped"
-                else:
-                    entry.auto_retry_at = now + timedelta(
-                        seconds=(10, 30, 120)[entry.auto_attempts]
-                    )
+    matched, problems = False, []
+    for version in ([] if manual else versions):
+        # Длина известна до inference. Ложная ветка И не запускает лишний OCR.
+        preliminary, _ = evaluate(version.expression, {}, len((post.text or "").strip()))
+        if preliminary is False:
+            continue
+        inputs = {}
+        blocked = False
+        for source in sorted(required_sources(version), key=lambda x: x != "text"):
+            key, profile = version.model_key, profile_of(version)
+            job = jobs.get(job_key(key, profile, source))
+            if job and source != "text" and job.status in {"complete", "media_only", "empty"}:
+                from app.ocr.jobs import classification_input_current
+                if not await classification_input_current(session, post, job, settings):
+                    job.status = "stale"
+            if job and job.status in {"needs_review", "failed"}:
+                if job.status == "needs_review" or source != "text" and job.status == "failed":
+                    problems.append(job.error or "OCR требует ручного разбора")
+                    blocked = True
+                    break
+                if entry.auto_phase != f"retry:{job.current_run_id}":
+                    entry.auto_phase = f"retry:{job.current_run_id}"
+                    if entry.auto_attempts >= 3:
+                        problems.append(job.error or "Ошибка модели")
+                        blocked = True
+                        break
+                    entry.auto_retry_at = now + timedelta(seconds=(10, 30, 120)[entry.auto_attempts])
                     entry.auto_attempts += 1
+                    return
+            if needs_backfill(job, post, profile, source):
+                await enqueue(session, entry.id, key, profile, source)
+                entry.auto_retry_at = now + timedelta(seconds=2)
                 return
-            await enqueue(session, entry.id, key, profile)
-            entry.auto_retry_at = now + timedelta(seconds=2)
-            return
-    matched = False
-    for version in versions:
-        values = await current_assessment(session, version, jobs.get(job_key(version.model_key, profile_of(version))), post)
+            inputs[source] = job
+        if blocked:
+            continue
+        values = await evaluate_post(session, entry, post, version, f"auto:{text_sha256(post.text)}", inputs)
         matched = matched or values["outcome"] == "matched"
+    if not matched and not manual and problems:
+        failure(entry, "ocr", "; ".join(dict.fromkeys(problems)))
+        return
+    if not (post.text or "").strip() and not any(j.status == "complete" for j in jobs.values()) and not manual:
+        await mark_without_text(session, entry, post)
     if not manual and (not matched or not await has_marks(session, entry.id)):
         entry.auto_state = "done"
         return

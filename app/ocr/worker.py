@@ -14,7 +14,9 @@ from app.db import create_engine, create_session_factory
 from app.models import PipelineEntry, TelegramPost, TaxonomyClassification, TaxonomyRun
 from app.ocr.models import OcrJob, OcrRun
 from app.ocr.jobs import snapshot
-from app.ocr.engine import compose_input, input_digest, file_digest, PREPROCESSING_VERSION, needs_review
+from app.ocr.engine import compose_ocr, input_digest, file_digest, PREPROCESSING_VERSION, needs_review
+from app.taxonomy.profiles import source_of
+from app.ocr.jobs import classification_digest
 from app.ocr.media import first_frame
 from app.runtime_status import heartbeat
 
@@ -102,9 +104,15 @@ async def process(factory, settings, reader, entry_id, run_id):
     try:
         if problem:
             raise ValueError(problem)
-        for item in inputs:
+        for number, item in enumerate(inputs, 1):
             results.append(await reader.read(item))
-        status = "needs_review" if any(needs_review(r) for r in results) else "complete" if compose_input(caption, results) else "no_text"
+            # Короткая отдельная транзакция: браузер видит завершённые вложения,
+            # но классификатор не получает частичный результат альбома.
+            async with factory() as progress_session:
+                await progress_session.execute(update(OcrRun).where(OcrRun.id == run_id,
+                    OcrRun.status == "running").values(completed_inputs=number, total_inputs=len(inputs)))
+                await progress_session.commit()
+        status = "needs_review" if any(needs_review(r) for r in results) else "complete" if compose_ocr(results) else "no_text"
         if status == "needs_review":
             error = "Есть строки с оценкой OCR ниже 50%; частичный текст не передаётся модели"
     except Exception as exc:
@@ -125,25 +133,27 @@ async def process(factory, settings, reader, entry_id, run_id):
             if current != run.source_sha256 or post.is_deleted:
                 status, error = "stale", "Пост или медиа изменились"
             run.status, run.error, run.results = status, error, results
+            run.total_inputs, run.completed_inputs = len(inputs), len(results)
             run.engine_version = reader.version
             run.elapsed_ms = max(1, round((time.perf_counter() - started) * 1000))
             run.finished_at = now
-            run.input_sha256 = input_digest(caption, results) if status in {"complete", "no_text", "needs_review"} else None
+            run.input_sha256 = input_digest(None, results) if status in {"complete", "no_text", "needs_review"} else None
             job.status, job.error, job.updated_at = status, error, now
             if status == "failed" and job.attempts <= 3:
                 job.status = "queued"
                 job.retry_at = now + timedelta(seconds=(10, 30, 120)[job.attempts - 1])
-                next_run = OcrRun(entry_id=entry_id, source_sha256=current, status="queued", inputs=inputs, results=[])
+                next_run = OcrRun(entry_id=entry_id, source_sha256=current, status="queued", inputs=inputs, results=[], total_inputs=len(inputs))
                 session.add(next_run)
                 await session.flush()
                 job.current_run_id = next_run.id
             # Классификатор читает только зафиксированный полный результат.
             waiting = list((await session.execute(select(TaxonomyClassification).where(
                 TaxonomyClassification.pipeline_entry_id == entry_id,
-                TaxonomyClassification.profile == "humor_ocr", TaxonomyClassification.status == "ocr"))).scalars())
+                TaxonomyClassification.input_source.in_(("ocr", "combined")), TaxonomyClassification.status == "ocr"))).scalars())
             for classification in waiting:
                 if status in {"complete", "no_text"}:
-                    classification.ocr_run_id, classification.input_sha256 = run.id, run.input_sha256
+                    classification.ocr_run_id = run.id
+                    classification.input_sha256 = classification_digest(post, run, source_of(classification))
                     classification.status = "queued"
                 elif job.status != "queued":
                     classification.status = "needs_review" if status == "needs_review" else "failed"

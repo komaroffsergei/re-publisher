@@ -49,7 +49,7 @@ from app.taxonomy.jobs import (
 )
 from app.web.selection_routes import register_filter_routes
 from app.web.publication_routes import register_publication_routes
-from app.taxonomy.profiles import job_key, profile_of, PROFILES
+from app.taxonomy.profiles import job_key, profile_of, source_of, PROFILES
 from app.web.source_media import (
     album_primary,
     downloaded_media_path,
@@ -178,7 +178,7 @@ async def board_state_for_entries(app, session, entry_ids):
             )
         )
     ).scalars():
-        jobs.setdefault(job.pipeline_entry_id, {})[job_key(job.model_key, profile_of(job))] = job
+        jobs.setdefault(job.pipeline_entry_id, {})[job_key(job.model_key, profile_of(job), source_of(job))] = job
     selections = await load_states(session, pairs)
     states = {}
     for entry, post in rows:
@@ -186,18 +186,15 @@ async def board_state_for_entries(app, session, entry_ids):
             key: public_job(job, post.text or "")
             for key, job in jobs.get(entry.id, {}).items()
         }
-        humor_jobs = [j for j in jobs.get(entry.id, {}).values() if profile_of(j) == "humor_ocr"]
-        if humor_jobs:
-            from app.ocr.jobs import current_input
-            from app.config import get_settings
-            model_input, ocr_run = await current_input(session, entry.id, post, get_settings())
-            for job in humor_jobs:
-                if job.status in {"complete", "media_only", "empty"} and (model_input is None or not ocr_run or job.input_sha256 != ocr_run.input_sha256):
-                    state = taxonomies[job_key(job.model_key, "humor_ocr")]
-                    state.update(status="stale", result=None, elapsed_ms=None)
-        active = any(
-            job["status"] in {"ocr", "queued", "loading", "running"} for job in taxonomies.values()
-        )
+        from app.ocr.jobs import public_ocr, classification_input_current
+        ocr = await public_ocr(session, entry.id, post, app.state.settings)
+        for key, job in jobs.get(entry.id, {}).items():
+            if job.status in {"complete", "media_only", "empty"} and not await classification_input_current(session, post, job, app.state.settings):
+                taxonomies[key].update(status="stale", result=None, elapsed_ms=None)
+        active = ocr["status"] in {"queued", "running", "waiting_media"} or any(
+            job["status"] in {"ocr", "queued", "loading", "running"} for job in taxonomies.values())
+        ocr_results = [j for j in taxonomies.values() if j["input_source"] == "ocr"]
+        ocr_badge = "OCR" if any(j["status"] == "complete" for j in ocr_results) else "OCR устарел" if any(j["status"] == "stale" for j in ocr_results) else None
         selection = selections.get(entry.id, {"marks": [], "checks": []})
         states[entry.id] = {
             "entry_id": entry.id,
@@ -205,6 +202,8 @@ async def board_state_for_entries(app, session, entry_ids):
             "status": entry.status,
             "active": active,
             "taxonomies": taxonomies,
+            "ocr": {key: ocr.get(key) for key in ("status", "error", "completed_inputs", "total_inputs")},
+            "ocr_badge": ocr_badge,
             "selection": selection,
             "deleted": post.is_deleted,
             "marked_source_url": entry.marked_source_url,
@@ -484,9 +483,9 @@ def register_routes(app: FastAPI) -> None:
                 body = await request.json()
             except ValueError:
                 raise HTTPException(422, "Нужен JSON-объект")
-            if not isinstance(body, dict) or set(body) - {"profile"} or body.get("profile", "taxonomy") not in PROFILES:
+            if not isinstance(body, dict) or set(body) - {"profile", "input_source"} or body.get("profile", "taxonomy") not in PROFILES:
                 raise HTTPException(422, "Неизвестный профиль или поле")
-            job = await enqueue_taxonomy(session, entry_id, model_key, body.get("profile", "taxonomy"))
+            job = await enqueue_taxonomy(session, entry_id, model_key, body.get("profile", "taxonomy"), body.get("input_source"))
             await session.commit()
             return public_job(job)
 
@@ -523,7 +522,7 @@ def register_routes(app: FastAPI) -> None:
             )
             has_more = len(runs) > 50
             public_runs = [public_run(run, row[0].text) for run in runs[:50]]
-            if any(profile_of(run) == "humor_ocr" for run in runs[:50]):
+            if any(source_of(run) != "text" for run in runs[:50]):
                 from app.ocr.jobs import current_input
                 from app.ocr.models import OcrRun
                 value, ocr_run = await current_input(session, entry_id, row[0], request.app.state.settings)
@@ -532,7 +531,8 @@ def register_routes(app: FastAPI) -> None:
                     select(OcrRun.id, OcrRun.elapsed_ms).where(OcrRun.id.in_(ocr_ids))
                 )).all()) if ocr_ids else {}
                 for item, run in zip(public_runs, runs[:50]):
-                    item["is_current_input"] = item["is_current_text"] and (profile_of(run) == "taxonomy" or value is not None and ocr_run is not None and run.input_sha256 == ocr_run.input_sha256)
+                    from app.ocr.jobs import classification_digest
+                    item["is_current_input"] = item["is_current_text"] and (source_of(run) == "text" or value is not None and ocr_run is not None and run.input_sha256 == classification_digest(row[0], ocr_run, source_of(run)))
                     item["ocr_elapsed_ms"] = durations.get(run.ocr_run_id)
             return {
                 "runs": public_runs,

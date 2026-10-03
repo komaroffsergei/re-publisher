@@ -12,8 +12,8 @@ from app.models import (FilterApplication, FilterEvaluation, FilterMark, FilterM
                         PostFilterMark, SelectionFilter, SelectionFilterVersion, TaxonomyClassification,
                         TaxonomyRun, TelegramChat, TelegramPost)
 from app.taxonomy.jobs import text_sha256
-from app.taxonomy.profiles import profile_of
-from app.content.selection_rules import evaluate, matching_conditions, taxonomy_catalog
+from app.taxonomy.profiles import profile_of, source_of
+from app.content.selection_rules import evaluate, matching_conditions, taxonomy_catalog, required_sources
 
 logger = logging.getLogger(__name__)
 
@@ -34,40 +34,69 @@ async def preserve_mark_stage(session, entry: PipelineEntry):
 
 def assessment(version, job, post):
     fingerprint = text_sha256(post.text)
-    run_id = job.current_run_id if job else None
+    jobs = job if isinstance(job, dict) else {source_of(job): job} if job else {}
+    scores, problems, run_ids = {}, {}, {}
     profile = profile_of(version)
-    input_key = f"{profile}:{getattr(job, 'input_sha256', None) or fingerprint}:{run_id or 0}:{job.status if job else 'missing'}"
-    scores = {}
-    reason = None
+    for source in required_sources(version):
+        current = jobs.get(source)
+        valid = current and current.status == "complete" and (source == "ocr" or current.text_sha256 == fingerprint)
+        if valid and (current.result or {}).get("taxonomy_version") == taxonomy_catalog(profile)["version"]:
+            scores[source] = (current.result or {}).get("scores") or {}
+        else:
+            problems[source] = "Нет актуальной оценки выбранной модели"
+        if current and current.current_run_id:
+            run_ids[source] = current.current_run_id
+    # Старинные условия humor_ocr не имеют source: их вход остаётся combined.
+    if profile == "humor_ocr" and "combined" in scores:
+        scores["text"] = scores["combined"]
+    result, trace = evaluate(version.expression, scores, len((post.text or "").strip()))
     if post.is_deleted:
-        reason = "Пост удалён"
-    elif profile == "taxonomy" and not (post.text or "").strip():
-        reason = "Нет содержательного текста"
-    elif not job or profile_of(job) != profile or job.status != "complete" or job.text_sha256 != fingerprint:
-        reason = "Нет актуальной оценки выбранной модели"
-    elif (job.result or {}).get("taxonomy_version") != taxonomy_catalog(profile)["version"]:
-        reason = "Нужно обновить полный набор оценок"
-    else:
-        scores = (job.result or {}).get("scores") or {}
-        if not scores:
-            reason = "Нужно обновить полный набор оценок"
-    result, trace = evaluate(version.expression, scores)
-    if reason:
-        result = None
-        trace["reason"] = reason
+        result, trace["reason"] = None, "Пост удалён"
+    elif getattr(version, "requires_ocr", False):
+        ocr = jobs.get("ocr")
+        if not ocr or ocr.status not in {"complete", "media_only", "empty"}:
+            result, trace["reason"] = None, getattr(ocr, "error", None) or "OCR ещё не оценён"
+    def annotate(node):
+        if node["op"] == "condition":
+            source = node.get("input_source", "combined" if profile == "humor_ocr" else "text")
+            node["run_id"] = run_ids.get(source)
+            if source in problems:
+                node["reason"] = problems[source]
+        for child in node.get("children", []):
+            annotate(child)
+    annotate(trace)
+    if result is None and "reason" not in trace:
+        trace["reason"] = "Не хватает актуальных оценок для проверки условий"
+    trace["run_ids"] = run_ids
+    keys = [f"{source}:{getattr(current, 'input_sha256', None)}:{getattr(current, 'current_run_id', None)}:{getattr(current, 'status', 'missing')}"
+            for source, current in sorted(jobs.items())]
+    main = max((j for j in jobs.values() if j and j.current_run_id), key=lambda j: j.current_run_id, default=None)
     return {"outcome": "matched" if result is True else "rejected" if result is False else "unknown",
-            "trace": trace, "run_id": run_id, "input_key": input_key, "text_sha256": fingerprint}
+            "trace": trace, "run_id": main.current_run_id if main else None, "run_ids": run_ids,
+            "input_key": f"{profile}:{fingerprint}:" + "|".join(keys), "text_sha256": fingerprint}
 
 
 async def current_assessment(session, version, job, post):
-    values = assessment(version, job, post)
-    if profile_of(version) == "humor_ocr" and job and values["outcome"] != "unknown":
-        from app.config import get_settings
-        from app.ocr.jobs import classification_input_current
-        if not await classification_input_current(session, post, job, get_settings()):
-            values["outcome"] = "unknown"
+    jobs = dict(job) if isinstance(job, dict) else {source_of(job): job} if job else {}
+    if required_sources(version) - set(jobs):
+        entry_id = getattr(job, "pipeline_entry_id", None)
+        statement = select(TaxonomyClassification).where(TaxonomyClassification.model_key == version.model_key,
+            TaxonomyClassification.profile == profile_of(version))
+        statement = statement.where(TaxonomyClassification.pipeline_entry_id == entry_id) if entry_id else statement.where(TaxonomyClassification.source_post_id == post.id)
+        jobs.update({source_of(j): j for j in (await session.execute(statement)).scalars()})
+    from app.config import get_settings
+    from app.ocr.jobs import classification_input_current
+    stale = set()
+    for source, current in jobs.items():
+        if current and source != "text" and current.status in {"complete", "media_only", "empty"}:
+            if not await classification_input_current(session, post, current, get_settings()):
+                stale.add(source)
+    usable = {source: j for source, j in jobs.items() if source not in stale}
+    values = assessment(version, usable, post)
+    if stale:
+        values["input_key"] += ":stale-ocr"
+        if values["outcome"] == "unknown":
             values["trace"]["reason"] = "OCR или вложения изменились; нужно пересчитать"
-            values["input_key"] += ":stale-ocr"
     return values
 
 
@@ -110,7 +139,8 @@ async def evaluate_post(session, entry, post, version, context: str, job=None):
         job = (await session.execute(select(TaxonomyClassification).where(
             TaxonomyClassification.pipeline_entry_id == entry.id,
             TaxonomyClassification.model_key == version.model_key,
-            TaxonomyClassification.profile == profile_of(version)))).scalar_one_or_none()
+            TaxonomyClassification.profile == profile_of(version),
+            TaxonomyClassification.input_source == ("combined" if profile_of(version) == "humor_ocr" else "text")))).scalar_one_or_none()
     values = await current_assessment(session, version, job, post)
     evaluation = (await session.execute(select(FilterEvaluation).where(
         FilterEvaluation.entry_id == entry.id, FilterEvaluation.version_id == version.id,
@@ -167,19 +197,20 @@ async def preview(session, version):
         if not rows:
             break
         ids = [entry.id for entry, _post in rows]
-        jobs = {job.pipeline_entry_id: job for job in (await session.execute(select(TaxonomyClassification).where(
+        jobs = {(job.pipeline_entry_id, source_of(job)): job for job in (await session.execute(select(TaxonomyClassification).where(
             TaxonomyClassification.pipeline_entry_id.in_(ids), TaxonomyClassification.model_key == version.model_key,
             TaxonomyClassification.profile == profile_of(version)))).scalars()}
         marked = set((await session.execute(select(PostFilterMark.entry_id).where(
             PostFilterMark.entry_id.in_(ids), PostFilterMark.mark_id == version.mark_id,
             PostFilterMark.active.is_(True)))).scalars())
         for entry, post in rows:
-            job = jobs.get(entry.id)
-            values = await current_assessment(session, version, job, post)
+            inputs = {source: job for (entry_id, source), job in jobs.items() if entry_id == entry.id}
+            job = max(inputs.values(), key=lambda j: j.current_run_id or 0, default=None)
+            values = await current_assessment(session, version, inputs, post)
             counts[values["outcome"]] += 1
             if values["outcome"] == "matched" and entry.id not in marked:
                 counts["new_marks"] += 1
-            if needs_backfill(job, post, profile_of(version)):
+            if any(needs_backfill(inputs.get(source), post, profile_of(version), source) for source in required_sources(version)):
                 counts["backfill_needed"] += 1
             # В предпросмотре только совпадения с актуальными оценками. Счётчики
             # считаем по всей выборке, а тексты возвращаем ограниченным списком.
@@ -187,22 +218,23 @@ async def preview(session, version):
                 examples.append({"entry_id": entry.id, **values,
                     "text": (post.text or "")[:500],
                     "text_truncated": len(post.text or "") > 500,
-                    "model_version": job.model_version,
+                    "model_version": job.model_version if job else None,
                     "matching_conditions": matching_conditions(values["trace"])})
         last = ids[-1]
     return {**counts, "total": sum(counts[key] for key in ("matched", "rejected", "unknown")), "examples": examples}
 
 
-def needs_backfill(job, post, profile="taxonomy"):
-    if (profile == "taxonomy" and not (post.text or "").strip()) or post.is_deleted:
+def needs_backfill(job, post, profile="taxonomy", input_source=None):
+    input_source = input_source or ("combined" if profile == "humor_ocr" else "text")
+    if (input_source == "text" and not (post.text or "").strip()) or post.is_deleted:
         return False
     if job is None:
         return True
-    current_text = job.text_sha256 == text_sha256(post.text)
+    current_text = input_source == "ocr" or job.text_sha256 == text_sha256(post.text)
     if job.status in {"ocr", "queued", "loading", "running"} and current_text:
         return False  # Завершение уже поставленного запуска проверит включённые фильтры.
     scores = (job.result or {}).get("scores") or {}
-    if profile == "humor_ocr" and job.status in {"media_only", "empty", "needs_review"} and current_text:
+    if input_source != "text" and job.status in {"media_only", "empty", "needs_review"} and current_text:
         return False
     return (profile_of(job) != profile or job.status != "complete" or not current_text or not scores
             or (job.result or {}).get("taxonomy_version") != taxonomy_catalog(profile)["version"])
@@ -234,7 +266,8 @@ async def application_batch(factory):
                 job = (await session.execute(select(TaxonomyClassification).where(
                     TaxonomyClassification.pipeline_entry_id == entry.id,
                     TaxonomyClassification.model_key == version.model_key,
-                    TaxonomyClassification.profile == profile_of(version)))).scalar_one_or_none()
+                    TaxonomyClassification.profile == profile_of(version),
+            TaxonomyClassification.input_source == ("combined" if profile_of(version) == "humor_ocr" else "text")))).scalar_one_or_none()
                 values = await evaluate_post(session, entry, post, version, f"apply:{application.id}", job)
                 if needs_backfill(job, post, profile_of(version)):
                     try:
@@ -281,10 +314,13 @@ def trace_text(trace):
     names = {label["id"]: label["name"] for label in taxonomy_catalog()["labels"]}
     if trace.get("reason"):
         return trace["reason"]
+    if trace["op"] == "length":
+        sign = {"gte": "≥", "gt": ">", "lte": "≤", "lt": "<", "eq": "="}[trace["compare"]]
+        return f"Длина поста {trace['value']} {sign} {trace['threshold']} символов"
     if trace["op"] == "condition":
         sign = {"gte": "≥", "gt": ">", "lte": "≤", "lt": "<"}[trace["compare"]]
         actual = "нет оценки" if trace["score"] is None else f"{trace['score'] * 100:.1f}%"
-        text = f"{names.get(trace['label_id'], trace['label_id'])} {sign} {trace['threshold']:g}% (оценка: {actual})"
+        text = f"{'OCR · ' if trace.get('input_source') == 'ocr' else 'Текст · '}{names.get(trace['label_id'], trace['label_id'])} {sign} {trace['threshold']:g}% (оценка: {actual})"
     else:
         children = [trace_text(child) for child in trace.get("children", [])]
         text = f"НЕ ({children[0]})" if trace["op"] == "not" else "(" + (" И " if trace["op"] == "and" else " ИЛИ ").join(children) + ")"
@@ -326,12 +362,12 @@ async def load_states(session, entries: dict):
     versions = (await session.execute(select(SelectionFilterVersion).join(SelectionFilter,
         SelectionFilter.active_version_id == SelectionFilterVersion.id).where(
         SelectionFilter.enabled.is_(True), SelectionFilter.archived.is_(False)))).scalars().all()
-    jobs = {(job.pipeline_entry_id, job.model_key, profile_of(job)): job for job in (await session.execute(
+    jobs = {(job.pipeline_entry_id, job.model_key, profile_of(job), source_of(job)): job for job in (await session.execute(
         select(TaxonomyClassification).where(TaxonomyClassification.pipeline_entry_id.in_(ids)))).scalars()}
     # Текущие совпадения считаются без записи: ручное снятие не отменяется polling.
     for entry_id, (_entry, _state, post) in entries.items():
         for version in versions:
-            values = await current_assessment(session, version, jobs.get((entry_id, version.model_key, profile_of(version))), post)
+            values = await current_assessment(session, version, {source: jobs.get((entry_id, version.model_key, profile_of(version), source)) for source in required_sources(version)}, post)
             result[entry_id]["checks"].append({"filter_id": version.filter_id, "name": version.name,
                 "version": version.number, "model_key": version.model_key, "outcome": values["outcome"],
                 "assigned": values["trace"].get("assigned"),

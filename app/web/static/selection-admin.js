@@ -146,9 +146,31 @@
       const wrapper = el(
         "div",
         undefined,
-        node.op === "condition" ? "rule-condition" : "rule-group",
+        ["condition", "length"].includes(node.op) ? "rule-condition" : "rule-group",
       );
-      if (node.op === "condition") {
+      if (["condition", "length"].includes(node.op)) {
+        const kind = el("select"); kind.setAttribute("aria-label", "Тип условия");
+        kind.add(new Option("Оценка модели", "condition")); kind.add(new Option("Длина поста", "length")); kind.value = node.op;
+        kind.onchange = () => {
+          for (const key of Object.keys(node)) delete node[key];
+          Object.assign(node, kind.value === "length" ? {op:"length", compare:"lte", threshold:500} : condition());
+          dirty(); draw();
+        };
+        wrapper.append(label("Условие", kind));
+      }
+      if (node.op === "length") {
+        const compare = el("select"); compare.setAttribute("aria-label", "Сравнение длины");
+        for (const [value,name] of Object.entries({gte:"≥",gt:">",lte:"≤",lt:"<",eq:"="})) compare.add(new Option(name,value));
+        compare.value=node.compare; compare.onchange=()=>{node.compare=compare.value;dirty();};
+        const size=el("input"); size.type="number"; size.min=0; size.step=1; size.required=true; size.value=node.threshold;
+        size.setAttribute("aria-label","Длина в символах"); size.oninput=()=>{node.threshold=Number(size.value);dirty();};
+        wrapper.append(label("Сравнение",compare),label("Символов",size));
+      } else if (node.op === "condition") {
+        const source=el("select"); source.setAttribute("aria-label","Источник оценки");
+        source.add(new Option("Текст поста","text")); if(form.elements.requires_ocr.checked) source.add(new Option("OCR","ocr"));
+        source.value=node.input_source || "text";
+        source.onchange=()=>{node.input_source=source.value;dirty();};
+        wrapper.append(label("Источник",source));
         const category = el("select");
         category.setAttribute("aria-label", "Категория");
         for (const [kind, title] of [
@@ -310,6 +332,7 @@
         : "";
       form.elements.model_key.value = item?.model_key || "tfidf";
       form.elements.profile.value = item?.profile || "taxonomy";
+      form.elements.requires_ocr.checked = item?.requires_ocr ?? false;
       catalog = catalogs[form.elements.profile.value]?.labels || [];
       drawMarks(item?.mark_id);
       expression = item
@@ -340,6 +363,7 @@
         enabled: form.elements.enabled.checked,
         model_key: form.elements.model_key.value,
         profile: form.elements.profile.value,
+        requires_ocr: form.elements.requires_ocr.checked,
         mark_id: Number(assignedMark.value),
         expression,
         filter_id: edited?.id || null,
@@ -382,7 +406,7 @@
           ),
           el(
             "p",
-            `Признак: ${item.mark_name} · текущих совпадений: ${item.matches}`,
+            `${item.requires_ocr ? "Требует OCR · " : ""}Признак: ${item.mark_name} · текущих совпадений: ${item.matches}`,
           ),
         );
         if (item.application) {
@@ -425,6 +449,14 @@
     form.elements.profile.addEventListener("change", () => {
       catalog = catalogs[form.elements.profile.value]?.labels || [];
       expression = {op: "and", children: [condition()]};
+      dirty(); draw();
+    });
+    form.elements.requires_ocr.addEventListener("change", () => {
+      const hasOcr = node => node.input_source === "ocr" || (node.children || []).some(hasOcr);
+      if (!form.elements.requires_ocr.checked && hasOcr(expression)) {
+        form.elements.requires_ocr.checked = true;
+        feedback.textContent="Сначала измени или убери условия по OCR."; return;
+      }
       dirty(); draw();
     });
     for (const name of ["name", "enabled", "model_key"])
@@ -475,8 +507,8 @@
               "muted",
             ),
           );
-        const operators = { gte: "≥", gt: ">", lte: "≤", lt: "<" };
-        const inverted = { gte: "lt", gt: "lte", lte: "gt", lt: "gte" };
+        const operators = { gte: "≥", gt: ">", lte: "≤", lt: "<", eq:"=", ne:"≠" };
+        const inverted = { gte: "lt", gt: "lte", lte: "gt", lt: "gte", eq:"ne" };
         for (const example of data.examples) {
           const card = el("article", undefined, "preview-match");
           const heading = el("header", undefined, "preview-match-header");
@@ -496,11 +528,16 @@
           const conditions = el("div", undefined, "preview-match-conditions");
           conditions.setAttribute("aria-label", "Условия, по которым совпало");
           for (const condition of example.matching_conditions) {
+            if (condition.op === "length") {
+              const sign=operators[condition.negated ? inverted[condition.compare] : condition.compare];
+              conditions.append(el("div",`Длина поста ${condition.value} ${sign} ${condition.threshold} символов`,"preview-match-condition"));
+              continue;
+            }
             const item = catalog.find((item) => item.id === condition.label_id);
             const parent = catalog.find((parent) => parent.id === item?.parent);
             const name = parent ? `${parent.name} / ${item.name}` : item.name;
             const chip = el("div", undefined, "preview-match-condition");
-            chip.append(el("strong", name));
+            chip.append(el("strong", `${condition.input_source === "ocr" ? "OCR" : "Текст поста"} · ${name}`));
             const compare = condition.negated
               ? inverted[condition.compare]
               : condition.compare;
@@ -540,7 +577,7 @@
         reset(filters.find((item) => item.id === data.id));
         feedback.textContent = data.application_id
           ? "Сохранено. Пересчёт карточек поставлен в очередь."
-          : "Сохранено. Фильтр отключён.";
+          : form.elements.enabled.checked ? "Сохранено. Для OCR старый буфер автоматически не запускается." : "Сохранено. Фильтр отключён.";
       } catch (error) {
         report(feedback, error);
         apply.disabled = false;

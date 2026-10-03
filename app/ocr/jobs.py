@@ -7,7 +7,7 @@ from sqlalchemy import select
 from fastapi import HTTPException
 from app.models import PipelineEntry, TelegramPost
 from app.ocr.models import OcrJob, OcrRun
-from app.ocr.engine import compose_input, media_digest, input_digest, engine_version
+from app.ocr.engine import compose_input, compose_ocr, media_digest, input_digest, engine_version
 from app.ocr.media import safe_path
 
 TERMINAL = {"complete", "no_text", "needs_review", "failed"}
@@ -18,7 +18,6 @@ async def snapshot(session, post, settings):
     from app.content.post_preparation import album_posts
     posts = await album_posts(session, post)
     inputs, provenance, error = [], [], None
-    long_caption = len((post.text or "").strip()) > settings.ocr_caption_max_chars
     # Идентичное превью не делает заменённое видео прежним вложением.
     # В отпечатке учитываем все оригиналы, включая не используемые OCR.
     for item in posts:
@@ -34,33 +33,32 @@ async def snapshot(session, post, settings):
         TelegramPost.is_deleted.is_(True)).limit(1))).scalar_one_or_none())
     if deleted:
         error = "В альбоме удалено сообщение; нужен ручной разбор состава"
-    if not long_caption:
-        now = datetime.now(timezone.utc)
-        if not deleted and post.grouped_id and any(p.updated_at and (now - p.updated_at).total_seconds() < 5 for p in posts):
-            error = "Альбом ещё собирается"
-        for item in posts:
-            if not item.media_type:
-                continue
-            original = safe_path(item.media_path, settings.media_dir)
-            preview = safe_path(item.ocr_preview_path, settings.ocr_preview_dir)
-            kind = (item.media_type or "").lower()
-            # Документы определяем по MIME, не расширению пользовательского имени.
-            mime = ((item.raw or {}).get("media") or {}).get("document", {}).get("mime_type", "")
-            video = "video" in kind or mime.startswith("video/")
-            image = any(t in kind for t in ("photo", "image", "gif")) or mime.startswith("image/")
-            if not video and not image:
-                continue
-            selected = preview if video and preview else original
-            if selected is None:
-                error = f"Медиа сообщения {item.message_id} недоступно: {item.media_download_status}"
-            inputs.append({"post_id": item.id, "message_id": item.message_id,
-                "kind": "video_frame" if video and not preview else "image",
-                "path": str(selected) if selected else None,
-                "sha256": media_digest(selected) if selected else None,
-                "original_status": item.media_download_status,
-                "preview_status": item.ocr_preview_status if video else None})
-    data = {"caption": (post.text or "").strip(), "inputs": inputs, "media": provenance, "error": error,
-            "contract": "caption_ocr_v1", "long_caption": long_caption,
+    now = datetime.now(timezone.utc)
+    if not deleted and post.grouped_id and any(p.updated_at and (now - p.updated_at).total_seconds() < 5 for p in posts):
+        error = "Альбом ещё собирается"
+    for item in posts:
+        if not item.media_type:
+            continue
+        original = safe_path(item.media_path, settings.media_dir)
+        preview = safe_path(item.ocr_preview_path, settings.ocr_preview_dir)
+        kind = (item.media_type or "").lower()
+        # Документы определяем по MIME, не расширению пользовательского имени.
+        mime = ((item.raw or {}).get("media") or {}).get("document", {}).get("mime_type", "")
+        video = "video" in kind or mime.startswith("video/")
+        image = any(t in kind for t in ("photo", "image", "gif")) or mime.startswith("image/")
+        if not video and not image:
+            continue
+        selected = preview if video and preview else original
+        if selected is None:
+            error = f"Медиа сообщения {item.message_id} недоступно: {item.media_download_status}"
+        inputs.append({"post_id": item.id, "message_id": item.message_id,
+            "kind": "video_frame" if video and not preview else "image",
+            "path": str(selected) if selected else None,
+            "sha256": media_digest(selected) if selected else None,
+            "original_status": item.media_download_status,
+            "preview_status": item.ocr_preview_status if video else None})
+    data = {"inputs": inputs, "media": provenance, "error": error,
+            "contract": "ocr_media_v2",
             "engine_version": engine_version(settings.ocr_model_dir) if settings.ocr_enabled else "disabled"}
     source_sha = hashlib.sha256(json.dumps(data, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     return source_sha, inputs, error
@@ -96,7 +94,7 @@ async def enqueue_ocr(session, entry, post, settings, retry=False):
         session.add(job)
     # Старый результат остаётся в истории; текущая ссылка заменяется.
     run = OcrRun(entry_id=entry.id, source_sha256=source, status="waiting_media" if error else "queued",
-                 inputs=inputs, results=[], error=error)
+                 inputs=inputs, results=[], error=error, total_inputs=len(inputs), completed_inputs=0)
     session.add(run)
     await session.flush()
     job.current_run_id, job.source_sha256 = run.id, source
@@ -105,7 +103,7 @@ async def enqueue_ocr(session, entry, post, settings, retry=False):
     return job
 
 
-async def current_input(session, entry_id, post, settings):
+async def current_input(session, entry_id, post, settings, input_source="combined"):
     """Нет готового полного OCR — нет входа классификатора, даже при подписи."""
     job = await session.get(OcrJob, entry_id)
     if not job:
@@ -115,7 +113,11 @@ async def current_input(session, entry_id, post, settings):
     from app.ocr.engine import needs_review
     if error or not run or job.source_sha256 != source or job.status not in {"complete", "no_text"} or any(needs_review(r) for r in run.results):
         return None, run
-    return compose_input(post.text, run.results), run
+    return (compose_ocr(run.results) if input_source == "ocr" else compose_input(post.text, run.results)), run
+
+
+def classification_digest(post, run, input_source):
+    return input_digest(None if input_source == "ocr" else post.text, run.results)
 
 
 async def public_ocr(session, entry_id, post, settings):
@@ -133,6 +135,8 @@ async def public_ocr(session, entry_id, post, settings):
         status = "needs_review"
         error = error or "Есть строки с оценкой OCR ниже 50%; частичный текст не передаётся модели"
     return {"status": status if job.source_sha256 == source else "stale", "error": error,
+            "completed_inputs": current.completed_inputs if current else 0,
+            "total_inputs": current.total_inputs if current else 0,
             "run_id": job.current_run_id, "runs": [{"id": r.id, "status": r.status,
             "engine_version": r.engine_version, "input_sha256": r.input_sha256,
             "results": r.results, "elapsed_ms": r.elapsed_ms, "error": r.error,
@@ -142,11 +146,11 @@ async def public_ocr(session, entry_id, post, settings):
 
 async def classification_input_current(session, post, job, settings):
     """Оценка подписи не подтверждает актуальность OCR другого профиля."""
-    from app.taxonomy.profiles import profile_of
-    if not job or profile_of(job) != "humor_ocr":
+    from app.taxonomy.profiles import source_of
+    if not job or source_of(job) == "text":
         return True
-    value, run = await current_input(session, job.pipeline_entry_id, post, settings)
-    return value is not None and run is not None and run.input_sha256 == job.input_sha256
+    value, run = await current_input(session, job.pipeline_entry_id, post, settings, source_of(job))
+    return value is not None and run is not None and classification_digest(post, run, source_of(job)) == job.input_sha256
 
 
 async def invalidate_ocr(session, post, settings):
@@ -163,7 +167,7 @@ async def invalidate_ocr(session, post, settings):
             continue
         ocr_job.status = "stale"
         jobs = list((await session.execute(select(TaxonomyClassification).where(
-            TaxonomyClassification.pipeline_entry_id == entry.id, TaxonomyClassification.profile == "humor_ocr"))).scalars())
+            TaxonomyClassification.pipeline_entry_id == entry.id, TaxonomyClassification.input_source.in_(("ocr", "combined"))))).scalars())
         for job in jobs:
             job.status, job.error = "stale", None
             if job.current_run_id:

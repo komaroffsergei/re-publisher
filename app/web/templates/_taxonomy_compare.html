@@ -1,7 +1,8 @@
 <div class="taxonomy-comparison"
      data-taxonomy-compare="{{ compare_entry_id }}">
     <p class="taxonomy-info" data-compare-count>Загрузка прогонов…</p>
-    <label>Профиль сравнения <select data-compare-profile><option value="taxonomy">Текст поста</option><option value="humor_ocr">Юмор · подпись + OCR</option></select></label>
+    <label>Профиль сравнения <select data-compare-profile><option value="taxonomy">Категории и признаки</option><option value="humor_ocr">Юмор · подпись + OCR</option></select></label>
+    <label>Источник результата <select data-compare-source><option value="text">Текст поста</option><option value="ocr">OCR · только надписи</option><option value="combined" disabled>Подпись + OCR · старый вход</option></select></label>
     <div class="compare-pickers">
         <label>
             MiniLM<select data-compare-select="minilm" aria-label="Выбрать прогон MiniLM"></select>

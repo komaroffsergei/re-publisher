@@ -1,4 +1,6 @@
-<label class="profile-picker">Вход модели <select data-profile {% if state.active %}disabled{% endif %}><option value="taxonomy">Текст поста</option><option value="humor_ocr" {% if not request.app.state.settings.humor_model_dir %}disabled{% endif %}>Юмор · подпись + OCR</option></select></label>
+<label class="profile-picker">Набор оценок <select data-profile {% if state.active %}disabled{% endif %}><option value="taxonomy">Категории и признаки</option><option value="humor_ocr" {% if not request.app.state.settings.humor_model_dir %}disabled{% endif %}>Юмор · подпись + OCR</option></select></label>
+<label class="profile-picker">Источник <select data-input-source><option value="text">Текст поста</option><option value="ocr">OCR · только надписи</option><option value="combined" disabled>Подпись + OCR · старый вход</option></select></label>
+<span class="badge ocr-badge" data-ocr-badge hidden>OCR</span><div class="ocr-progress" data-ocr-progress hidden aria-live="polite"><span data-ocr-phase></span><progress data-ocr-bar aria-label="Прогресс OCR"></progress><small data-ocr-count></small></div>
 <div class="model-actions">{% for key,name in [('tfidf','TF-IDF'),('minilm','MiniLM')] %}<button type="button"
         data-taxonomy="{{ key }}"
         data-model-enabled="{{ 'true' if request.app.state.settings.taxonomy_enabled else 'false' }}"

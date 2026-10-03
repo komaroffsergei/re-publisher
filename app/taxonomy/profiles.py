@@ -10,8 +10,14 @@ def profile_of(value):
     return getattr(value, "profile", None) or "taxonomy"
 
 
-def job_key(model_key, profile="taxonomy"):
-    return model_key if profile == "taxonomy" else f"{profile}:{model_key}"
+def source_of(value):
+    return getattr(value, "input_source", None) or ("combined" if profile_of(value) == "humor_ocr" else "text")
+
+
+def job_key(model_key, profile="taxonomy", input_source=None):
+    input_source = input_source or ("combined" if profile == "humor_ocr" else "text")
+    base = model_key if profile == "taxonomy" else f"{profile}:{model_key}"
+    return base if input_source in {"text", "combined"} else f"{base}:{input_source}"
 
 
 def profile_labels(profile):

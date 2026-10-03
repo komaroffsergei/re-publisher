@@ -16,7 +16,7 @@ from app.db import create_engine, create_session_factory
 from app.models import PipelineEntry, TaxonomyClassification, TaxonomyRun, TelegramPost
 from app.taxonomy.inference import TaxonomyModel
 from app.taxonomy.jobs import MODEL_KEYS, text_sha256
-from app.taxonomy.profiles import profile_of
+from app.taxonomy.profiles import profile_of, source_of
 from app.taxonomy.input_contract import InputNeedsReview
 
 
@@ -78,12 +78,9 @@ async def finish_job(factory, job_id: int, result: dict | None, elapsed_ms: int,
             job.elapsed_ms = elapsed_ms
             if model_version is not None:
                 job.model_version = model_version
-            ocr_stale = False
-            if post is not None and profile_of(job) == "humor_ocr":
-                from app.ocr.jobs import current_input
-                value, ocr_run = await current_input(session, job.pipeline_entry_id, post, get_settings())
-                ocr_stale = value is None or not ocr_run or job.input_sha256 != ocr_run.input_sha256
-            if post is None or post.is_deleted or job.text_sha256 != text_sha256(post.text) or ocr_stale:
+            from app.ocr.jobs import classification_input_current
+            ocr_stale = post is not None and not await classification_input_current(session, post, job, get_settings())
+            if post is None or post.is_deleted or (source_of(job) != "ocr" and job.text_sha256 != text_sha256(post.text)) or ocr_stale:
                 job.status = "stale"
                 job.result = None
                 job.error = None
@@ -199,22 +196,22 @@ async def run() -> None:
                             .where(TaxonomyClassification.id == job_id)
                         )
                     ).first()
-                if row is None or row[0].text_sha256 != text_sha256(row[1].text) or row[1].is_deleted:
+                if row is None or (source_of(row[0]) != "ocr" and row[0].text_sha256 != text_sha256(row[1].text)) or row[1].is_deleted:
                     await finish_job(factory, job_id, None, 0)
                     continue
                 profile = profile_of(row[0])
                 model_input = row[1].text or ""
-                if profile == "humor_ocr":
-                    from app.ocr.jobs import current_input
+                if source_of(row[0]) != "text":
+                    from app.ocr.jobs import current_input, classification_digest
                     async with factory() as session:
-                        model_input, ocr_run = await current_input(session, row[0].pipeline_entry_id, row[1], settings)
-                    if model_input is None or not ocr_run or ocr_run.input_sha256 != row[0].input_sha256:
+                        model_input, ocr_run = await current_input(session, row[0].pipeline_entry_id, row[1], settings, source_of(row[0]))
+                    if model_input is None or not ocr_run or classification_digest(row[1], ocr_run, source_of(row[0])) != row[0].input_sha256:
                         await finish_job(factory, job_id, None, 0, "OCR устарел; повторите подготовку")
                         continue
                     if not model_input:
                         result = {"status": "media_only" if row[1].media_type else "empty", "category": "only_media" if row[1].media_type else "empty",
                             "top_3": [], "features": [], "scores": {}, "technical_complexity": None,
-                            "review_status": "no_text", "profile": profile, "score_kind": "no_model_inference"}
+                            "review_status": "no_text", "profile": profile, "score_kind": "no_model_inference", "input_source": source_of(row[0])}
                         await finish_job(factory, job_id, result, 0)
                         continue
                 if loaded_profile != profile:

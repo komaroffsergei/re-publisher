@@ -23,7 +23,7 @@
                                  margin:0;
                                  min-width:0">
                     <div class="selection-fields">
-                        <label>Профиль<select name="profile"><option value="taxonomy">Текст поста</option><option value="humor_ocr">Юмор · подпись + OCR</option></select></label>
+                        <label>Набор оценок<select name="profile"><option value="taxonomy">Категории и признаки</option><option value="humor_ocr">Юмор · подпись + OCR</option></select></label>
                         <label>
                             Название фильтра<input name="name" maxlength="120" required>
                         </label>
@@ -38,6 +38,8 @@
                             Включён
                         </label>
                     </div>
+                    <label class="checkbox-row"><input name="requires_ocr" type="checkbox">Требует OCR</label>
+                    <p class="muted">Надписи на медиа распознаются отдельно. В каждом условии выбирается источник оценки: текст поста или OCR.</p>
                     <h3>Назначаемый признак</h3>
                     <label>
                         Лейбл из словаря<select name="mark_id" aria-label="Назначаемый признак" required></select>
@@ -53,8 +55,8 @@
             </form>
             <p id="filters-feedback" role="status">Загружаю словарь и фильтры…</p>
             <div id="filter-preview-result" aria-live="polite"></div>
-            <p class="muted">Обычная таксономия пересчитывает старые карточки партиями. Профиль юмора работает с новыми постами и ручными прогонами: сохранение фильтра не запускает OCR всего старого буфера. Сохранённые лейблы снимаются вручную.</p>
+            <p class="muted">Обычная таксономия пересчитывает старые карточки партиями. Фильтры с OCR работают с новыми постами и ручными прогонами: сохранение фильтра не запускает OCR всего старого буфера. Сохранённые лейблы снимаются вручную.</p>
         </article>
     </div>
-    <script src="/static/selection-admin.js?v=humor-ocr-2" defer></script>
+    <script src="/static/selection-admin.js?v=separate-ocr-1" defer></script>
 {% endblock %}
